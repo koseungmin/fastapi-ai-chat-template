@@ -17,7 +17,6 @@ __all__ = [
     "Chat",
     "ChatMessage", 
     "Document",
-    "DocumentFolder",
     "Group",
     "GroupMember",
 ]
