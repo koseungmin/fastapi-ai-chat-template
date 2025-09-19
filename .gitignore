@@ -12,3 +12,10 @@ app/backend/logs/
 *.egg-info/
 build/
 dist/
+# Environment variables
+.env
+.env.local
+.env.production
+.env.development
+app/backend/.env
+app/backend/.env.*
