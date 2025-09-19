@@ -1,0 +1,109 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-backend-deployment
+  namespace: default
+  labels:
+    app: ai-backend
+    component: backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: ai-backend
+      component: backend
+  template:
+    metadata:
+      labels:
+        app: ai-backend
+        component: backend
+    spec:
+      containers:
+      - name: ai-backend
+        image: ai-backend:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8000
+          name: http
+          protocol: TCP
+        
+        # Environment variables from ConfigMap and Secret
+        envFrom:
+        - configMapRef:
+            name: ai-backend-config
+        - secretRef:
+            name: ai-backend-secret
+        
+        # Resource limits and requests
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        
+        # Health checks
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        
+        # Volume mounts
+        volumeMounts:
+        - name: uploads-storage
+          mountPath: /app/uploads
+        - name: logs-storage
+          mountPath: /var/log/ai-backend
+        
+        # Security context
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          runAsGroup: 1000
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          capabilities:
+            drop:
+            - ALL
+      
+      # Volumes
+      volumes:
+      - name: uploads-storage
+        persistentVolumeClaim:
+          claimName: ai-backend-pvc
+      - name: logs-storage
+        emptyDir: {}
+      
+      # Security context for pod
+      securityContext:
+        fsGroup: 1000
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      
+      # Restart policy
+      restartPolicy: Always
+      
+      # Node selection (optional)
+      # nodeSelector:
+      #   kubernetes.io/os: linux
+      
+      # Tolerations (optional)
+      # tolerations:
+      # - key: "node-role.kubernetes.io/master"
+      #   operator: "Exists"
+      #   effect: "NoSchedule"

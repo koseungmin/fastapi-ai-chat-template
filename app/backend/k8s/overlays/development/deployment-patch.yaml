@@ -1,0 +1,23 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-backend-deployment
+spec:
+  template:
+    spec:
+      containers:
+      - name: ai-backend
+        # 개발 환경용 리소스 설정 (더 적은 리소스)
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+        # 개발 환경용 환경변수 추가
+        env:
+        - name: DEVELOPMENT_MODE
+          value: "true"
+        - name: HOT_RELOAD
+          value: "true"

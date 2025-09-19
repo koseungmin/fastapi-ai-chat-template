@@ -1,0 +1,14 @@
+.DS_Store
+.idea
+.vscode
+__pycache__
+*.log
+
+# Logs directory (로컬 개발용)
+logs/
+app/backend/logs/
+
+# Python package metadata
+*.egg-info/
+build/
+dist/

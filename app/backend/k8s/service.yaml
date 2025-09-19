@@ -1,0 +1,40 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: ai-backend-service
+  namespace: default
+  labels:
+    app: ai-backend
+    component: service
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8000
+    targetPort: 8000
+    protocol: TCP
+    name: http
+  selector:
+    app: ai-backend
+    component: backend
+  sessionAffinity: None
+---
+# Optional: NodePort service for external access (for testing)
+apiVersion: v1
+kind: Service
+metadata:
+  name: ai-backend-nodeport
+  namespace: default
+  labels:
+    app: ai-backend
+    component: nodeport
+spec:
+  type: NodePort
+  ports:
+  - port: 8000
+    targetPort: 8000
+    nodePort: 30080
+    protocol: TCP
+    name: http
+  selector:
+    app: ai-backend
+    component: backend

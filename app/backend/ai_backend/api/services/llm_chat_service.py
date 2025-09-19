@@ -1,0 +1,782 @@
+# _*_ coding: utf-8 _*_
+"""LLM Chat Service for handling AI conversations."""
+import asyncio
+import logging
+from typing import Dict, List, Optional
+from openai import AsyncOpenAI
+from sqlalchemy.orm import Session
+from ai_backend.database.models.chat_models import ChatMessage
+from ai_backend.database.crud.chat_crud import ChatCRUD
+from ai_backend.database.base import Database
+from ai_backend.utils.uuid_gen import gen
+from ai_backend.types.response.exceptions import HandledException
+from ai_backend.types.response.response_code import ResponseCode
+from datetime import datetime
+
+logger = logging.getLogger(__name__)
+
+
+class LLMChatService:
+    """LLM 채팅 서비스를 관리하는 클래스"""
+    
+    def __init__(self, openai_api_key: str, model: str = "gpt-3.5-turbo", db: Session = None, redis_client=None):
+        # API 키 디버그 출력
+        logger.info(f"OpenAI API Key: {openai_api_key[:10]}...{openai_api_key[-4:] if len(openai_api_key) > 14 else 'SHORT'}")
+        logger.info(f"API Key length: {len(openai_api_key)}")
+        
+        # DB 필수 검사
+        if db is None:
+            raise HandledException(ResponseCode.DATABASE_CONNECTION_ERROR, msg="Database session is required")
+        
+        self.openai_client = AsyncOpenAI(api_key=openai_api_key)
+        self.model = model
+        self.db = db  # 이제 Session 객체
+        self.redis_client = redis_client
+        self.chat_crud = ChatCRUD(db)  # Repository 인스턴스 생성
+        
+        # 취소 상태 관리
+        self.is_cancelled = {}
+        
+        # 레디스 사용 여부 결정 (로컬: DB만, 운영: 레디스+DB)
+        self.use_redis = self._should_use_redis()
+        logger.info(f"Cache mode: {'Redis + DB' if self.use_redis else 'DB only'}")
+    
+    def _should_use_redis(self) -> bool:
+        """레디스 사용 여부 결정 (로컬: false, 운영: true)"""
+        if self.redis_client is None:
+            return False
+        
+        # 레디스 연결 확인
+        try:
+            if not self.redis_client.ping():
+                logger.warning("Redis connection failed, using DB only")
+                return False
+        except Exception as e:
+            logger.warning(f"Redis ping failed: {e}, using DB only")
+            return False
+        
+        # 환경 변수로 강제 설정 가능
+        import os
+        cache_enabled = os.getenv("CACHE_ENABLED", "true").lower() == "true"
+        if not cache_enabled:
+            logger.info("CACHE_ENABLED=false, using DB only")
+            return False
+        
+        logger.info("Redis available, using Redis + DB mode")
+        return True
+    
+    def _get_messages_for_openai(self, chat_id: str) -> List[Dict]:
+        """메시지를 가져와서 OpenAI 형식으로 변환 (레디스 우선)"""
+        messages = []
+        
+        # 레디스 우선으로 대화 기록 조회
+        if self.use_redis:
+            try:
+                cached_history = self.redis_client.get_chat_messages(chat_id)
+                if cached_history:
+                    # 캐시된 데이터를 OpenAI 형식으로 변환
+                    for msg in cached_history[-10:]:  # 최근 10개만
+                        messages.append({
+                            "role": msg.get("role", "user"),
+                            "content": msg.get("content", "")
+                        })
+                    return messages
+            except Exception as e:
+                logger.warning(f"Redis cache read failed: {e}")
+        
+        # 레디스에 없거나 실패한 경우 DB에서 조회
+        db_messages = self.chat_crud.get_messages(chat_id)
+        
+        # 최근 10개 메시지만 사용
+        for msg in db_messages[-10:]:
+            # 메시지 타입을 role로 변환
+            role = msg.message_type
+            if msg.message_type == "user":
+                role = "user"
+            elif msg.message_type == "assistant":
+                role = "assistant"
+            elif msg.message_type in ["cancelled", "system"]:
+                role = "system"
+            
+            # 취소된 메시지는 시스템 메시지로 표시
+            if msg.is_cancelled:
+                role = "system"
+            
+            messages.append({
+                "role": role,
+                "content": msg.message
+            })
+        return messages
+    
+    def _ensure_chat_exists(self, chat_id: str):
+        """채팅이 존재하지 않으면 생성"""
+        try:
+            # Repository에 세션 전달
+            self.chat_crud.get_chat_or_create(chat_id, "user")
+        except HandledException:
+            raise  # Repository에서 발생한 HandledException 전파
+        except Exception as e:
+            raise HandledException(ResponseCode.UNDEFINED_ERROR, e=e)
+    
+    def send_message_simple(self, chat_id: str, message: str, user_id: str = "user") -> dict:
+        """사용자 메시지를 처리하고 LLM 응답을 생성 (REST API용)"""
+        try:
+            # 비즈니스 로직 검증
+            if not message or not message.strip():
+                raise HandledException(ResponseCode.CHAT_MESSAGE_INVALID, msg="메시지가 비어있습니다.")
+            
+            if not chat_id or not chat_id.strip():
+                raise HandledException(ResponseCode.CHAT_SESSION_NOT_FOUND, msg="채팅 ID가 유효하지 않습니다.")
+            
+            # 채팅 존재 확인 및 초기화
+            self._ensure_chat_exists(chat_id)
+            
+            # 사용자 메시지를 DB에 저장
+            user_message_id = gen()
+            self.chat_crud.save_user_message(user_message_id, chat_id, user_id, message)
+            
+            # 레디스 캐시 무효화 (새 메시지 추가됨)
+            if self.use_redis:
+                try:
+                    self.redis_client.delete_chat_messages(chat_id)
+                    logger.debug(f"Invalidated cache for chat {chat_id}")
+                except Exception as e:
+                    logger.warning(f"Redis cache invalidation failed: {e}")
+            
+            # LLM 응답 생성
+            ai_response = self._generate_ai_response(chat_id)
+            
+            # AI 응답을 DB에 저장
+            ai_message_id = gen()
+            self.chat_crud.save_ai_message(ai_message_id, chat_id, user_id, ai_response, "completed")
+            
+            # 레디스 캐시 무효화 (AI 응답 추가됨)
+            if self.use_redis:
+                try:
+                    self.redis_client.delete_chat_messages(chat_id)
+                    logger.debug(f"Invalidated cache for chat {chat_id} after AI response")
+                except Exception as e:
+                    logger.warning(f"Redis cache invalidation failed: {e}")
+            
+            # AI 응답 반환
+            return {
+                "message_id": ai_message_id,
+                "content": ai_response,
+                "user_id": user_id,
+                "timestamp": self.get_current_timestamp()
+            }
+            
+        except HandledException:
+            raise  # HandledException은 그대로 전파
+        except Exception as e:
+            # 에러 발생 시 메시지 상태를 error로 업데이트
+            if 'ai_message_id' in locals():
+                try:
+                    chat_crud = ChatCRUD(self.db)
+                    chat_crud.update_message_to_error(ai_message_id, str(e))
+                except HandledException:
+                    raise  # Repository에서 발생한 HandledException 전파
+                except Exception as db_error:
+                    logger.error(f"Failed to update message status to error: {db_error}")
+            
+            raise HandledException(ResponseCode.UNDEFINED_ERROR, e=e)
+    
+    def _generate_ai_response(self, chat_id: str) -> str:
+        """OpenAI API를 사용하여 AI 응답 생성"""
+        try:
+            # 대화 기록을 가져와서 OpenAI 형식으로 변환
+            messages = []
+            
+            # 레디스 우선으로 대화 기록 조회
+            if self.use_redis:
+                try:
+                    cached_history = self.redis_client.get_chat_messages(chat_id)
+                    if cached_history:
+                        # 캐시된 데이터 사용
+                        for msg in cached_history[-10:]:  # 최근 10개만
+                            messages.append({
+                                "role": msg.get("role", "user"),
+                                "content": msg.get("content", "")
+                            })
+                    else:
+                        # 캐시에 없으면 DB에서 조회
+                        messages = self._get_messages_for_openai(chat_id)
+                except Exception as e:
+                    logger.warning(f"Redis cache read failed: {e}")
+                    messages = self._get_messages_for_openai(chat_id)
+            else:
+                # DB만 사용
+                messages = self._get_messages_for_openai(chat_id)
+            
+            # 시스템 프롬프트 추가
+            system_prompt = {
+                "role": "system",
+                "content": "당신은 도움이 되는 AI 어시스턴트입니다. 사용자의 질문에 정확하고 유용한 답변을 제공해주세요."
+            }
+            messages.insert(0, system_prompt)
+            
+            # OpenAI API 호출
+            response = asyncio.run(self.openai_client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                max_tokens=1000,
+                temperature=0.7
+            ))
+            
+            return response.choices[0].message.content
+            
+        except HandledException:
+            raise  # HandledException은 그대로 전파
+        except Exception as e:
+            raise HandledException(ResponseCode.CHAT_AI_RESPONSE_ERROR, e=e)
+    
+    
+    def get_conversation_history(self, chat_id: str) -> List[Dict]:
+        """대화 기록 조회 (레디스 우선, 없으면 DB에서)"""
+        try:
+            # 비즈니스 로직 검증
+            if not chat_id or not chat_id.strip():
+                raise HandledException(ResponseCode.CHAT_SESSION_NOT_FOUND, msg="채팅 ID가 유효하지 않습니다.")
+            
+            if self.use_redis:
+                # 레디스에서 먼저 조회
+                try:
+                    cached_history = self.redis_client.get_chat_messages(chat_id)
+                    if cached_history:
+                        logger.debug(f"Cache hit for chat {chat_id}")
+                        return cached_history
+                except Exception as e:
+                    logger.warning(f"Redis cache read failed: {e}")
+            
+            # 레디스에 없거나 실패한 경우 DB에서 조회
+            history = self.chat_crud.get_messages_from_db(chat_id)
+            
+            # 레디스 사용 시 캐시에 저장
+            if self.use_redis and history:
+                try:
+                    self.redis_client.set_chat_messages(chat_id, history, 1800)  # 30분 TTL
+                    logger.debug(f"Cached history for chat {chat_id}")
+                except Exception as e:
+                    logger.warning(f"Redis cache write failed: {e}")
+            
+            return history
+        except HandledException:
+            raise  # HandledException은 그대로 전파
+        except Exception as e:
+            raise HandledException(ResponseCode.CHAT_HISTORY_LOAD_ERROR, e=e)
+    
+    
+    def clear_conversation(self, chat_id: str):
+        """대화 기록 초기화 (DB에서 메시지 삭제)"""
+        try:
+            self.chat_crud.clear_conversation(chat_id)
+            
+            # 레디스 캐시도 삭제
+            if self.use_redis:
+                try:
+                    # 채팅방 메시지 캐시 삭제
+                    self.redis_client.delete_chat_messages(chat_id)
+                    
+                    # 생성 상태 캐시 삭제
+                    generation_key = f"generation:{chat_id}"
+                    self.redis_client.redis_client.delete(generation_key)
+                    
+                    # 취소 상태 캐시 삭제
+                    cancel_key = f"cancel:{chat_id}"
+                    self.redis_client.redis_client.delete(cancel_key)
+                    
+                    logger.debug(f"Cleared all cache for chat {chat_id}")
+                except Exception as e:
+                    logger.warning(f"Redis cache clear failed: {e}")
+        except HandledException:
+            raise  # Repository에서 발생한 HandledException 전파
+        except Exception as e:
+            raise HandledException(ResponseCode.UNDEFINED_ERROR, e=e)
+    
+    def get_current_timestamp(self) -> str:
+        """현재 타임스탬프 반환"""
+        return datetime.now().isoformat()
+    
+    def get_active_chats(self) -> List[str]:
+        """현재 생성 중인 채팅 목록 반환 (DB에서)"""
+        try:
+            active_chats = self.chat_crud.get_active_generating_chats()
+            return [chat["chat_id"] for chat in active_chats]
+        except HandledException:
+            raise  # Repository에서 발생한 HandledException 전파
+        except Exception as e:
+            raise HandledException(ResponseCode.UNDEFINED_ERROR, e=e)
+    
+    def save_user_message(self, chat_id: str, message: str, user_id: str = "user") -> str:
+        """사용자 메시지를 저장하고 메시지 ID 반환"""
+        # 세션 존재 확인 및 초기화
+        self._ensure_chat_exists(chat_id)
+        
+        # 사용자 메시지를 DB에 저장
+        user_message_id = gen()
+        self.chat_crud.save_user_message_simple(user_message_id, chat_id, user_id, message)
+        
+        # 레디스 캐시 무효화
+        if self.use_redis:
+            try:
+                self.redis_client.delete_chat_messages(chat_id)
+                logger.debug(f"Invalidated cache for chat {chat_id}")
+            except Exception as e:
+                logger.warning(f"Redis cache invalidation failed: {e}")
+        
+        return user_message_id
+    
+    async def generate_ai_response_stream(self, chat_id: str, user_id: str = "user"):
+        """AI 응답을 스트리밍으로 생성"""
+        ai_message_id = None
+        ai_response_content = ""
+        is_cancelled = False
+        
+        try:
+            # 세션 존재 확인 및 초기화
+            self._ensure_chat_exists(chat_id)
+            
+            # 생성 시작 표시 (레디스에 저장)
+            if self.use_redis:
+                try:
+                    generation_key = f"generation:{chat_id}"
+                    self.redis_client.redis_client.setex(generation_key, 300, "1")  # 5분 TTL
+                except Exception as e:
+                    logger.warning(f"Redis generation start failed: {e}")
+            
+            # 진행 상황 표시
+            yield {
+                'type': 'progress',
+                'step': 'thinking',
+                'message': 'AI가 생각하고 있습니다...',
+                'timestamp': self.get_current_timestamp()
+            }
+            
+            # 취소 확인
+            if self.is_cancelled.get(chat_id, False):
+                is_cancelled = True
+                yield {
+                    'type': 'cancelled',
+                    'message': '사용자에 의해 취소되었습니다.',
+                    'timestamp': self.get_current_timestamp()
+                }
+                return
+            
+            # 대화 기록을 가져와서 OpenAI 형식으로 변환 (레디스 우선)
+            messages = self._get_messages_for_openai(chat_id)
+            
+            # 시스템 프롬프트 추가
+            system_prompt = {
+                "role": "system",
+                "content": "당신은 도움이 되는 AI 어시스턴트입니다. 사용자의 질문에 정확하고 유용한 답변을 제공해주세요."
+            }
+            messages.insert(0, system_prompt)
+            
+            # 진행 상황 표시
+            yield {
+                'type': 'progress',
+                'step': 'generating',
+                'message': 'AI가 응답을 생성하고 있습니다...',
+                'timestamp': self.get_current_timestamp()
+            }
+            
+            # 취소 확인
+            if self.is_cancelled.get(chat_id, False):
+                is_cancelled = True
+                yield {
+                    'type': 'cancelled',
+                    'message': '사용자에 의해 취소되었습니다.',
+                    'timestamp': self.get_current_timestamp()
+                }
+                return
+            
+            # OpenAI API 호출 (스트리밍)
+            stream = await self.openai_client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                max_tokens=1000,
+                temperature=0.7,
+                stream=True
+            )
+            
+            ai_response_content = ""
+            ai_message_id = gen()
+            
+            # AI 응답을 진행중 상태로 DB에 저장
+            self.chat_crud.save_ai_message_generating(ai_message_id, chat_id, user_id)
+            
+            async for chunk in stream:
+                # 취소 확인 (레디스 우선)
+                if self.use_redis:
+                    try:
+                        cancel_key = f"cancel:{chat_id}"
+                        if self.redis_client.redis_client.exists(cancel_key):
+                            is_cancelled = True
+                            logger.info(f"Cancellation detected in stream for session: {chat_id}")
+                            yield {
+                                'type': 'cancelled',
+                                'message': '사용자에 의해 취소되었습니다.',
+                                'timestamp': self.get_current_timestamp()
+                            }
+                            break
+                    except Exception as e:
+                        logger.warning(f"Redis cancel check failed: {e}")
+                
+                # 레디스에 없거나 실패한 경우 DB에서 확인
+                if not is_cancelled:
+                    try:
+                        messages = self.chat_crud.get_messages(chat_id)
+                        if messages and messages[-1].is_cancelled:
+                            is_cancelled = True
+                            logger.info(f"Cancellation detected in stream for session: {chat_id}")
+                            yield {
+                                'type': 'cancelled',
+                                'message': '사용자에 의해 취소되었습니다.',
+                                'timestamp': self.get_current_timestamp()
+                            }
+                            break
+                    except Exception as e:
+                        logger.warning(f"DB cancel check failed: {e}")
+                
+                if chunk.choices[0].delta.content is not None:
+                    content = chunk.choices[0].delta.content
+                    ai_response_content += content
+                    
+                    # 부분 응답 스트림
+                    yield {
+                        'type': 'ai_response_chunk',
+                        'message_id': ai_message_id,
+                        'content': content,
+                        'user_id': user_id,
+                        'timestamp': self.get_current_timestamp()
+                    }
+            
+            # 취소되지 않은 경우에만 완전한 응답 처리
+            if not is_cancelled and ai_response_content:
+                # AI 응답 완료 후 상태 업데이트
+                self.chat_crud.update_ai_message_completed(ai_message_id, ai_response_content)
+                
+                # DB에 이미 저장되었으므로 메모리 저장 불필요
+                
+                # 완료 표시
+                yield {
+                    'type': 'ai_response_complete',
+                    'message_id': ai_message_id,
+                    'content': ai_response_content,
+                    'user_id': user_id,
+                    'timestamp': self.get_current_timestamp()
+                }
+            else:
+                # 취소된 경우 - 메시지 처리
+                try:
+                    if ai_message_id:
+                        self.chat_crud.update_message_to_error(ai_message_id, "⚠️ 응답이 취소되었습니다.")
+                    else:
+                        # ai_message_id가 없으면 새로 생성
+                        ai_message_id = gen()
+                        
+                        # 채팅방이 존재하는지 확인하고, 없으면 생성
+                        chat = self.chat_crud.get_chat(chat_id)
+                        if not chat:
+                            self.chat_crud.create_chat(
+                                chat_id=chat_id,
+                                chat_title=f"Chat {chat_id}",
+                                user_id=user_id
+                            )
+                            
+                        # 취소 메시지 저장
+                        self.chat_crud.create_message(
+                            message_id=ai_message_id,
+                            chat_id=chat_id,
+                            user_id=user_id,
+                            message="⚠️ 응답이 취소되었습니다.",
+                            message_type="assistant",
+                            status="cancelled",
+                            is_cancelled=True
+                        )
+                            
+                except Exception as e:
+                    # DB 저장 실패 시에도 메시지 ID 생성
+                    if not ai_message_id:
+                        ai_message_id = gen()
+                
+                # DB에 이미 저장되었으므로 메모리 저장 불필요
+                
+                # 취소 완료 메시지 스트림 전송
+                yield {
+                    'type': 'cancelled',
+                    'message_id': ai_message_id,
+                    'content': '⚠️ 응답이 취소되었습니다.',
+                    'user_id': user_id,
+                    'timestamp': self.get_current_timestamp()
+                }
+            
+        except HandledException as e:
+            # HandledException은 스트림으로 전달 (연결 유지)
+            if ai_message_id:
+                try:
+                    self.chat_crud.update_message_status(ai_message_id, "error")
+                    # 에러 메시지로 업데이트
+                    message = self.db.query(ChatMessage).filter(ChatMessage.message_id == ai_message_id).first()
+                    if message:
+                        message.message = f"❌ 오류가 발생했습니다: {e.message}"
+                        self.db.commit()
+                except Exception as db_error:
+                    logger.error(f"Failed to update message status to error: {db_error}")
+            
+            # 스트리밍 에러 응답 생성
+            from ai_backend.types.response.chat_response import StreamErrorResponse
+            error_response = StreamErrorResponse(
+                code=e.code,
+                message=e.message,
+                content=f"AI 응답 생성 중 오류가 발생했습니다: {e.message}",
+                timestamp=self.get_current_timestamp(),
+                chat_id=chat_id
+            )
+            yield error_response.dict()
+        except Exception as e:
+            # 에러 발생 시 메시지 상태를 error로 업데이트
+            if ai_message_id:
+                try:
+                    self.chat_crud.update_message_status(ai_message_id, "error")
+                    # 에러 메시지로 업데이트
+                    message = self.db.query(ChatMessage).filter(ChatMessage.message_id == ai_message_id).first()
+                    if message:
+                        message.message = f"❌ 오류가 발생했습니다: {str(e)}"
+                        self.db.commit()
+                except Exception as db_error:
+                    logger.error(f"Failed to update message status to error: {db_error}")
+            
+            
+            # 스트리밍 에러 응답 생성
+            from ai_backend.types.response.chat_response import StreamErrorResponse
+            error_response = StreamErrorResponse(
+                code=-2,  # UNDEFINED_ERROR
+                message="정의되지 않은 오류입니다.",
+                content=f"AI 응답 생성 중 예상치 못한 오류가 발생했습니다: {str(e)}",
+                timestamp=self.get_current_timestamp(),
+                chat_id=chat_id
+            )
+            yield error_response.dict()
+        finally:
+            # 생성 완료 - 레디스에서 생성 상태 제거
+            if self.use_redis:
+                try:
+                    generation_key = f"generation:{chat_id}"
+                    self.redis_client.redis_client.delete(generation_key)
+                except Exception as e:
+                    logger.warning(f"Redis generation cleanup failed: {e}")
+    
+    async def cancel_generation(self, chat_id: str, user_id: str = "user"):
+        """현재 생성 중인 AI 응답을 취소"""
+        try:
+            # 비즈니스 로직 검증
+            if not chat_id or not chat_id.strip():
+                raise HandledException(ResponseCode.CHAT_SESSION_NOT_FOUND, msg="채팅 ID가 유효하지 않습니다.")
+            
+            # 세션 존재 확인 및 초기화
+            self._ensure_chat_exists(chat_id)
+            
+            # 레디스에서 생성 상태 확인
+            if self.use_redis:
+                try:
+                    generation_key = f"generation:{chat_id}"
+                    if self.redis_client.redis_client.exists(generation_key):
+                        # 레디스에서 생성 상태 제거
+                        self.redis_client.redis_client.delete(generation_key)
+                        
+                        # 취소 상태를 레디스에 저장
+                        cancel_key = f"cancel:{chat_id}"
+                        self.redis_client.redis_client.setex(cancel_key, 60, "1")  # 1분 TTL
+                        
+                        logger.info(f"Generation cancelled for session: {chat_id}")
+                        return True
+                except Exception as e:
+                    logger.warning(f"Redis cancel check failed: {e}")
+            
+            # DB에서 현재 생성 중인 메시지가 있는지 확인
+            messages = self.chat_crud.get_messages(chat_id)
+            
+            # 최근 메시지가 generating 상태인지 확인
+            if messages and messages[-1].status == "generating":
+                # 생성 중인 메시지를 취소 상태로 변경
+                messages[-1].status = "cancelled"
+                messages[-1].is_cancelled = True
+                messages[-1].message = "⚠️ 응답이 취소되었습니다."
+                self.db.commit()
+                logger.info(f"Generation cancelled for session: {chat_id}")
+                return True
+            else:
+                # 생성이 완료되었거나 시작되지 않은 경우에도 취소 메시지 저장
+                await self._save_cancelled_message_standalone(chat_id, user_id)
+                logger.info(f"No active generation to cancel for session: {chat_id}, but saved cancelled message")
+                return True
+                
+        except HandledException:
+            raise  # HandledException은 그대로 전파
+        except Exception as e:
+            raise HandledException(ResponseCode.CHAT_GENERATION_CANCEL_ERROR, e=e)
+    
+    async def _save_cancelled_message_standalone(self, chat_id: str, user_id: str = "user"):
+        """독립적으로 취소 메시지를 저장하는 메서드"""
+        try:
+            # 메시지 ID 생성
+            ai_message_id = gen()
+            
+            # 채팅방이 존재하는지 확인하고, 없으면 생성
+            chat = self.chat_crud.get_chat(chat_id)
+            if not chat:
+                self.chat_crud.create_chat(
+                    chat_id=chat_id,
+                    chat_title=f"Chat {chat_id}",
+                    user_id=user_id
+                )
+            
+            # 취소 메시지 저장
+            self.chat_crud.create_message(
+                message_id=ai_message_id,
+                chat_id=chat_id,
+                user_id=user_id,
+                message="⚠️ 응답이 취소되었습니다.",
+                message_type="assistant",
+                status="cancelled",
+                is_cancelled=True
+            )
+            
+            # DB에 이미 저장되었으므로 메모리 저장 불필요
+            
+        except HandledException:
+            raise  # HandledException은 그대로 전파
+        except Exception as e:
+            raise HandledException(ResponseCode.UNDEFINED_ERROR, e=e)
+    
+    def is_generating(self, chat_id: str) -> bool:
+        """현재 생성 중인지 확인 (레디스 우선)"""
+        # 레디스에서 먼저 확인
+        if self.use_redis:
+            try:
+                # 레디스에서 생성 상태 확인 (간단한 키-값 체크)
+                generation_key = f"generation:{chat_id}"
+                return self.redis_client.redis_client.exists(generation_key)
+            except Exception as e:
+                logger.warning(f"Redis generation check failed: {e}")
+        
+        # 레디스에 없거나 실패한 경우 DB에서 확인
+        messages = self.chat_crud.get_messages(chat_id)
+        # 최근 메시지가 generating 상태인지 확인
+        return messages and messages[-1].status == "generating"
+    
+    def create_chat(self, chat_title: str, user_id: str) -> str:
+        """새로운 채팅 생성"""
+        chat_id = gen()
+        
+        self.chat_crud.create_chat(chat_id, chat_title, user_id)
+        
+        logger.info(f"Created chat: {chat_id} for user: {user_id}")
+        return chat_id
+    
+    def get_user_chats(self, user_id: str) -> List[Dict]:
+        """사용자의 채팅 목록 조회"""
+        chats = self.chat_crud.get_user_chats(user_id)
+        return [
+            {
+                "chat_id": chat.chat_id,
+                "chat_title": chat.chat_title,
+                "user_id": chat.user_id,
+                "created_at": chat.create_dt.isoformat(),
+                "last_message_at": chat.last_message_at.isoformat() if chat.last_message_at else None
+            }
+            for chat in chats
+        ]
+    
+    def delete_chat(self, chat_id: str) -> bool:
+        """채팅 삭제"""
+        try:
+            # 비즈니스 로직 검증
+            if not chat_id or not chat_id.strip():
+                raise HandledException(ResponseCode.CHAT_SESSION_NOT_FOUND, msg="채팅 ID가 유효하지 않습니다.")
+            
+            success = self.chat_crud.delete_chat(chat_id)
+            
+            # DB 삭제 성공 시 Redis 캐시도 삭제
+            if success and self.use_redis:
+                try:
+                    # 채팅방 관련 모든 캐시 삭제
+                    self.redis_client.delete_chat_messages(chat_id)
+                    
+                    # 생성 상태 캐시 삭제
+                    generation_key = f"generation:{chat_id}"
+                    self.redis_client.redis_client.delete(generation_key)
+                    
+                    # 취소 상태 캐시 삭제
+                    cancel_key = f"cancel:{chat_id}"
+                    self.redis_client.redis_client.delete(cancel_key)
+                    
+                    logger.debug(f"Cleared all cache for deleted chat {chat_id}")
+                except Exception as e:
+                    logger.warning(f"Redis cache cleanup failed for chat {chat_id}: {e}")
+            
+            return success
+        except HandledException:
+            raise  # HandledException은 그대로 전파
+        except Exception as e:
+            raise HandledException(ResponseCode.CHAT_DELETE_ERROR, e=e)
+    
+    def get_chat_info(self, chat_id: str) -> Optional[Dict]:
+        """채팅 정보 조회"""
+        chat = self.chat_crud.get_chat(chat_id)
+        if chat:
+            return {
+                "chat_id": chat.chat_id,
+                "chat_title": chat.chat_title,
+                "user_id": chat.user_id,
+                "created_at": chat.create_dt.isoformat(),
+                "last_message_at": chat.last_message_at.isoformat() if chat.last_message_at else None
+            }
+        return None
+    
+    def update_chat_last_message(self, chat_id: str):
+        """채팅 마지막 메시지 시간 업데이트"""
+        self.chat_crud.update_chat_last_message(chat_id)
+    
+    async def generate_chat_title(self, message: str) -> str:
+        """질문을 기반으로 채팅 제목을 생성합니다."""
+        try:
+            # OpenAI API를 사용하여 제목 생성
+            response = await self.openai_client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "다음 질문을 기반으로 간단하고 명확한 채팅방 제목을 생성해주세요. 20자 이내로 만들어주세요."
+                    },
+                    {
+                        "role": "user",
+                        "content": f"질문: {message}"
+                    }
+                ],
+                max_tokens=50,
+                temperature=0.7
+            )
+            
+            title = response.choices[0].message.content.strip()
+            
+            # 제목이 너무 길면 자르기
+            if len(title) > 20:
+                title = title[:17] + "..."
+            
+            # 빈 제목이면 기본값
+            if not title:
+                title = f"Chat {datetime.now().strftime('%H:%M')}"
+            
+            return title
+            
+        except HandledException:
+            raise  # HandledException은 그대로 전파
+        except Exception as e:
+            # 실패 시 간단한 제목 생성 (HandledException으로 변환하지 않음 - 제목 생성은 선택적 기능)
+            words = message.split()[:3]  # 처음 3개 단어만 사용
+            title = " ".join(words)
+            if len(title) > 15:
+                title = title[:12] + "..."
+            return title if title else f"Chat {datetime.now().strftime('%H:%M')}"

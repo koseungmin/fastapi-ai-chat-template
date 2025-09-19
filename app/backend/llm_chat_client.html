@@ -1,0 +1,1502 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LLM Chat Client (REST API)</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f5f5f5;
+            height: 100vh;
+            display: flex;
+        }
+        .sidebar {
+            width: 300px;
+            background: white;
+            border-right: 1px solid #dee2e6;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+        .sidebar-header {
+            padding: 20px;
+            border-bottom: 1px solid #dee2e6;
+            background: #007bff;
+            color: white;
+        }
+        .user-input-section {
+            padding: 15px;
+            border-bottom: 1px solid #dee2e6;
+            background: #f8f9fa;
+        }
+        .user-input-section input {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        .room-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 10px;
+        }
+        .room-item {
+            padding: 12px;
+            margin-bottom: 8px;
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 6px;
+            transition: background-color 0.2s;
+            position: relative;
+            min-height: 60px;
+        }
+        .room-item:hover {
+            background: #e9ecef;
+        }
+        .room-item.active {
+            background: #007bff;
+            color: white;
+        }
+        .room-content {
+            cursor: pointer;
+            padding-right: 50px; /* 삭제 버튼을 위한 공간 확보 */
+        }
+        .room-actions {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            z-index: 10;
+        }
+        .delete-room-btn {
+            background: #dc3545;
+            color: white;
+            border: none;
+            border-radius: 3px;
+            padding: 4px 8px;
+            cursor: pointer;
+            font-size: 10px;
+            font-weight: bold;
+            width: 35px;
+            height: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+        }
+        .delete-room-btn:hover {
+            background: #c82333;
+            transform: scale(1.05);
+        }
+        .room-name {
+            font-weight: bold;
+            margin-bottom: 4px;
+        }
+        .room-time {
+            font-size: 12px;
+            opacity: 0.7;
+        }
+        .room-preview {
+            font-size: 12px;
+            margin-top: 4px;
+            opacity: 0.8;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .new-room-btn {
+            width: 100%;
+            padding: 10px;
+            background: #28a745;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-bottom: 10px;
+        }
+        .new-room-btn:hover {
+            background: #218838;
+        }
+        .chat-container {
+            flex: 1;
+            background: white;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+        .chat-header {
+            background: #007bff;
+            color: white;
+            padding: 15px;
+            border-radius: 10px 10px 0 0;
+            text-align: center;
+        }
+        .chat-messages {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            border-bottom: 1px solid #eee;
+        }
+        .message {
+            margin-bottom: 15px;
+            padding: 10px;
+            border-radius: 10px;
+            max-width: 70%;
+        }
+        .user-message {
+            background: #007bff;
+            color: white;
+            margin-left: auto;
+        }
+        .ai-message {
+            background: #f8f9fa;
+            color: #333;
+            border: 1px solid #dee2e6;
+        }
+        .system-message {
+            background: #e9ecef;
+            color: #6c757d;
+            text-align: center;
+            font-style: italic;
+        }
+        .error-message {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .chat-input {
+            padding: 15px;
+            display: flex;
+            gap: 10px;
+        }
+        .chat-input input {
+            flex: 1;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 16px;
+        }
+        .chat-input button {
+            padding: 10px 20px;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        .chat-input button:hover {
+            background: #0056b3;
+        }
+        .chat-input button:disabled {
+            background: #6c757d;
+            cursor: not-allowed;
+        }
+        .controls {
+            padding: 10px 15px;
+            background: #f8f9fa;
+            border-top: 1px solid #dee2e6;
+            display: flex;
+            gap: 10px;
+        }
+        .controls button {
+            padding: 5px 15px;
+            background: #6c757d;
+            color: white;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .controls button:hover {
+            background: #5a6268;
+        }
+        .status {
+            padding: 5px 15px;
+            background: #d4edda;
+            color: #155724;
+            font-size: 14px;
+        }
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 10px;
+            color: #6c757d;
+        }
+        .progress-indicator {
+            display: none;
+            padding: 10px;
+            background: #e3f2fd;
+            border-left: 4px solid #2196f3;
+            margin: 10px 0;
+            border-radius: 4px;
+        }
+        .progress-indicator.show {
+            display: block;
+        }
+        .ai-message-streaming {
+            background: #f8f9fa;
+            color: #333;
+            border: 1px solid #dee2e6;
+            position: relative;
+        }
+        .ai-message-streaming::after {
+            content: '▋';
+            animation: blink 1s infinite;
+            color: #007bff;
+        }
+        @keyframes blink {
+            0%, 50% { opacity: 1; }
+            51%, 100% { opacity: 0; }
+        }
+        .cancel-button {
+            background: #dc3545;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+            margin-left: 10px;
+        }
+        .cancel-button:hover {
+            background: #c82333;
+        }
+        .cancelled-message {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+            font-style: italic;
+            opacity: 0.9;
+        }
+        .cancelled-message::before {
+            content: "⚠️ ";
+        }
+        .upload-section {
+            padding: 15px;
+            border-bottom: 1px solid #dee2e6;
+            background: #f8f9fa;
+        }
+        .upload-section h4 {
+            margin: 0 0 10px 0;
+            color: #495057;
+            font-size: 14px;
+        }
+        .upload-form {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .upload-form input[type="text"] {
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        .file-input-wrapper {
+            position: relative;
+            display: inline-block;
+        }
+        .file-input-wrapper input[type="file"] {
+            position: absolute;
+            left: -9999px;
+        }
+        .file-input-label {
+            display: inline-block;
+            padding: 8px 16px;
+            background: #17a2b8;
+            color: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            text-align: center;
+            transition: background-color 0.2s;
+        }
+        .file-input-label:hover {
+            background: #138496;
+        }
+        .upload-buttons {
+            display: flex;
+            gap: 8px;
+        }
+        .upload-btn {
+            flex: 1;
+            padding: 8px 12px;
+            background: #28a745;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .upload-btn:hover {
+            background: #218838;
+        }
+        .upload-btn:disabled {
+            background: #6c757d;
+            cursor: not-allowed;
+        }
+        .folder-select {
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            background: white;
+        }
+        .upload-status {
+            margin-top: 8px;
+            padding: 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            display: none;
+        }
+        .progress-bar {
+            width: 100%;
+            height: 20px;
+            background-color: #e9ecef;
+            border-radius: 10px;
+            overflow: hidden;
+            margin-bottom: 8px;
+        }
+        .progress-fill {
+            height: 100%;
+            background-color: #007bff;
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+        .progress-text {
+            text-align: center;
+            font-weight: bold;
+            color: #495057;
+        }
+        .upload-mode-selector {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 10px;
+            padding: 8px;
+            background: #f8f9fa;
+            border-radius: 4px;
+        }
+        .upload-mode-selector label {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            color: #495057;
+        }
+        .upload-mode-selector input[type="radio"] {
+            margin: 0;
+        }
+        .upload-mode {
+            margin-bottom: 10px;
+        }
+        .selected-files {
+            margin-top: 10px;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 4px;
+            border: 1px solid #dee2e6;
+        }
+        .selected-files h5 {
+            margin: 0 0 8px 0;
+            color: #495057;
+            font-size: 14px;
+        }
+        .selected-files ul {
+            margin: 0;
+            padding: 0;
+            list-style: none;
+        }
+        .selected-files li {
+            padding: 4px 0;
+            color: #6c757d;
+            font-size: 13px;
+            border-bottom: 1px solid #e9ecef;
+        }
+        .selected-files li:last-child {
+            border-bottom: none;
+        }
+        .upload-status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .upload-status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .document-list {
+            max-height: 200px;
+            overflow-y: auto;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            background: white;
+            margin-top: 8px;
+        }
+        .document-item {
+            padding: 8px 12px;
+            border-bottom: 1px solid #f1f3f4;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 12px;
+        }
+        .document-item:last-child {
+            border-bottom: none;
+        }
+        .document-name {
+            flex: 1;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .document-actions {
+            display: flex;
+            gap: 4px;
+        }
+        .document-btn {
+            padding: 2px 6px;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 10px;
+        }
+        .download-btn {
+            background: #007bff;
+            color: white;
+        }
+        .delete-btn {
+            background: #dc3545;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <!-- 사이드바 -->
+    <div class="sidebar">
+        <div class="sidebar-header">
+            <h3>채팅 목록</h3>
+        </div>
+        <div class="user-input-section">
+            <input type="text" id="userNameInput" placeholder="사용자명을 입력하세요..." value="user">
+        </div>
+        
+        <!-- 문서 업로드 섹션 -->
+        <div class="upload-section">
+            <h4>📁 문서 업로드</h4>
+            <div class="upload-form">
+                <!-- 업로드 방식 선택 -->
+                <div class="upload-mode-selector">
+                    <label>
+                        <input type="radio" name="uploadMode" value="file" checked onchange="toggleUploadMode()">
+                        개별 파일 선택
+                    </label>
+                    <label>
+                        <input type="radio" name="uploadMode" value="folder" onchange="toggleUploadMode()">
+                        폴더 전체 업로드
+                    </label>
+                </div>
+                
+                <!-- 개별 파일 업로드 -->
+                <div id="fileUploadMode" class="upload-mode">
+                    <input type="text" id="folderNameInput" placeholder="폴더명 (선택사항)" />
+                    <div class="file-input-wrapper">
+                        <input type="file" id="fileInput" accept=".pdf,.doc,.docx,.txt,.jpg,.jpeg,.png,.gif,.xls,.xlsx" multiple />
+                        <label for="fileInput" class="file-input-label">📎 파일 선택 (여러 개 가능)</label>
+                    </div>
+                    <div id="selectedFiles" class="selected-files" style="display: none;">
+                        <h5>선택된 파일:</h5>
+                        <ul id="fileList"></ul>
+                    </div>
+                </div>
+                
+                <!-- 폴더 업로드 -->
+                <div id="folderUploadMode" class="upload-mode" style="display: none;">
+                    <input type="text" id="folderPathInput" placeholder="폴더 경로를 입력하세요 (예: /Users/username/Documents)" />
+                </div>
+                
+                <div class="upload-buttons">
+                    <button class="upload-btn" onclick="uploadDocument()" id="uploadBtn">업로드</button>
+                    <button class="upload-btn" onclick="loadDocuments()" id="refreshBtn">새로고침</button>
+                </div>
+                <div id="uploadStatus" class="upload-status"></div>
+                <div id="documentList" class="document-list" style="display: none;"></div>
+                <div id="uploadProgress" class="upload-progress" style="display: none;">
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="progressFill"></div>
+                    </div>
+                    <div class="progress-text" id="progressText">0%</div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="room-list">
+            <button class="new-room-btn" onclick="createNewChat()">새 채팅 만들기</button>
+            <div id="roomList"></div>
+        </div>
+    </div>
+
+    <!-- 채팅 영역 -->
+    <div class="chat-container">
+        <div class="chat-header">
+            <h2 id="currentRoomTitle">채팅을 선택하세요</h2>
+            <div id="status" class="status">준비됨</div>
+        </div>
+        <div id="chatMessages" class="chat-messages"></div>
+        <div class="loading" id="loading">AI가 응답을 생성하고 있습니다...</div>
+        <div class="progress-indicator" id="progressIndicator">
+            <div id="progressMessage">AI가 생각하고 있습니다...</div>
+            <button class="cancel-button" onclick="cancelGeneration()" id="cancelButton">취소</button>
+        </div>
+        <div class="chat-input">
+            <input type="text" id="messageInput" placeholder="질문을 입력하세요..." onkeypress="handleKeyPress(event)" disabled>
+            <button onclick="sendMessage()" id="sendButton" disabled>전송</button>
+        </div>
+    </div>
+
+    <script>
+        let currentChatId = null;
+        let isLoading = false;
+        let currentStreamingMessage = null;
+        let abortController = null;
+        let chats = [];
+        let documents = [];
+        let folders = [];
+
+        // 채팅 관련 함수들
+        async function loadChats() {
+            try {
+                const userName = document.getElementById('userNameInput').value || 'user';
+                const response = await fetch(`/api/v1/chat/chats?user_id=${encodeURIComponent(userName)}`);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                chats = data.chats || [];
+                displayChats();
+            } catch (error) {
+                console.error('Error loading chats:', error);
+            }
+        }
+
+        function displayChats() {
+            const roomListDiv = document.getElementById('roomList');
+            roomListDiv.innerHTML = '';
+            
+            if (chats.length === 0) {
+                roomListDiv.innerHTML = '<div style="text-align: center; color: #6c757d; padding: 20px;">채팅이 없습니다</div>';
+                return;
+            }
+            
+            chats.forEach(room => {
+                const roomDiv = document.createElement('div');
+                roomDiv.className = 'room-item';
+                
+                const time = room.last_message_at ? 
+                    new Date(room.last_message_at).toLocaleString() : 
+                    new Date(room.created_at).toLocaleString();
+                
+                roomDiv.innerHTML = `
+                    <div class="room-content" onclick="selectChat('${room.chat_id}')">
+                        <div class="room-name">${room.chat_title}</div>
+                        <div class="room-time">${time}</div>
+                        <div class="room-preview">채팅 ID: ${room.chat_id}</div>
+                    </div>
+                    <div class="room-actions">
+                        <button class="delete-room-btn" onclick="deleteChat('${room.chat_id}', event)">삭제</button>
+                    </div>
+                `;
+                
+                roomListDiv.appendChild(roomDiv);
+            });
+        }
+
+        function selectChat(chatId) {
+            // 이전 선택 해제
+            document.querySelectorAll('.room-item').forEach(item => {
+                item.classList.remove('active');
+            });
+            
+            // 새 선택 활성화
+            const roomElement = document.querySelector(`[onclick="selectChat('${chatId}')"]`);
+            if (roomElement) {
+                roomElement.closest('.room-item').classList.add('active');
+            }
+            
+            currentChatId = chatId;
+            
+            // 채팅 영역 활성화
+            document.getElementById('messageInput').disabled = false;
+            document.getElementById('sendButton').disabled = false;
+            
+            // 채팅 이름 찾기
+            const room = chats.find(r => r.room_id === chatId);
+            const chatTitle = room ? room.chat_title : chatId;
+            document.getElementById('currentRoomTitle').textContent = `채팅: ${chatTitle}`;
+            
+            // 채팅 기록 로드
+            loadChatHistory();
+        }
+
+        async function deleteChat(chatId, event) {
+            event.stopPropagation(); // 이벤트 버블링 방지
+            
+            if (!confirm('정말로 이 채팅을 삭제하시겠습니까?')) {
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/api/v1/chat/chats/${chatId}`, {
+                    method: 'DELETE',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                // 삭제된 채팅이 현재 선택된 채팅이면 채팅 영역 비활성화
+                if (currentChatId === chatId) {
+                    currentChatId = null;
+                    currentChatId = null;
+                    document.getElementById('messageInput').disabled = true;
+                    document.getElementById('sendButton').disabled = true;
+                    document.getElementById('currentRoomTitle').textContent = '채팅을 선택하세요';
+                    document.getElementById('chatMessages').innerHTML = '';
+                }
+                
+                // 채팅 목록 새로고침
+                await loadChats();
+                updateStatus('채팅이 삭제되었습니다.');
+                
+            } catch (error) {
+                console.error('Error deleting room:', error);
+                updateStatus('채팅 삭제에 실패했습니다.', true);
+            }
+        }
+
+        async function createNewChat() {
+            const chatTitle = prompt('채팅 이름을 입력하세요:', `Chat ${Date.now()}`);
+            if (!chatTitle) return;
+            
+            try {
+                console.log('Creating new chat with title:', chatTitle);
+                const userName = document.getElementById('userNameInput').value || 'user';
+                console.log('User name:', userName);
+                
+                const response = await fetch('/api/v1/chat/chats', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        chat_title: chatTitle,
+                        user_id: userName
+                    })
+                });
+                
+                console.log('Response status:', response.status);
+                
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    console.error('Error response:', errorText);
+                    throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`);
+                }
+                
+                const data = await response.json();
+                console.log('Created chat data:', data);
+                
+                // 새 채팅을 목록에 추가
+                chats.unshift({
+                    chat_id: data.chat_id,
+                    chat_title: data.chat_title,
+                    user_id: data.user_id,
+                    created_at: data.created_at,
+                    last_message_at: null
+                });
+                
+                displayChats();
+                selectChat(data.chat_id);
+                updateStatus('새 채팅이 생성되었습니다.');
+                
+            } catch (error) {
+                console.error('Error creating chat:', error);
+                updateStatus(`채팅 생성 중 오류가 발생했습니다: ${error.message}`, true);
+            }
+        }
+
+        async function createNewChatFromMessage(message) {
+            try {
+                // LLM을 사용하여 질문을 기반으로 채팅 제목 생성
+                const chatTitle = await generateChatTitle(message);
+                
+                const userName = document.getElementById('userNameInput').value || 'user';
+                const response = await fetch('/api/v1/chat/chats', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        chat_title: chatTitle,
+                        user_id: userName
+                    })
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                
+                // 새 채팅을 목록에 추가
+                chats.unshift({
+                    chat_id: data.chat_id,
+                    chat_title: data.chat_title,
+                    user_id: data.user_id,
+                    created_at: data.created_at,
+                    last_message_at: null
+                });
+                
+                displayChats();
+                selectChat(data.chat_id);
+                updateStatus('새 채팅이 생성되었습니다.');
+                
+            } catch (error) {
+                console.error('Error creating room from message:', error);
+                // 실패 시 기본 제목으로 생성
+                const fallbackName = `Chat ${Date.now()}`;
+                await createNewChatWithName(fallbackName);
+            }
+        }
+
+        async function createNewChatWithName(chatTitle) {
+            try {
+                const userName = document.getElementById('userNameInput').value || 'user';
+                const response = await fetch('/api/v1/chat/chats', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        chat_title: chatTitle,
+                        user_id: userName
+                    })
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                
+                // 새 채팅을 목록에 추가
+                chats.unshift({
+                    chat_id: data.chat_id,
+                    chat_title: data.chat_title,
+                    user_id: data.user_id,
+                    created_at: data.created_at,
+                    last_message_at: null
+                });
+                
+                displayChats();
+                selectChat(data.chat_id);
+                
+            } catch (error) {
+                console.error('Error creating room:', error);
+                updateStatus('채팅 생성에 실패했습니다.', true);
+            }
+        }
+
+        async function generateChatTitle(message) {
+            try {
+                // LLM API를 사용하여 제목 생성
+                const response = await fetch('/api/v1/chat/generate-title', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        message: message
+                    })
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                return data.title;
+                
+            } catch (error) {
+                console.error('Error generating room title:', error);
+                // 실패 시 간단한 제목 생성
+                const words = message.split(' ').slice(0, 3);
+                let title = words.join(' ');
+                
+                if (title.length > 15) {
+                    title = title.substring(0, 12) + '...';
+                }
+                
+                return title || `Chat ${new Date().toLocaleTimeString()}`;
+            }
+        }
+
+        async function loadChatHistory() {
+            if (!currentChatId) return;
+            
+            try {
+                const response = await fetch(`/api/v1/chat/${currentChatId}/history`);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                displayHistory(data.history);
+                
+            } catch (error) {
+                console.error('Error loading chat history:', error);
+                updateStatus('채팅 기록을 불러오는데 실패했습니다.', true);
+            }
+        }
+
+        function addMessage(content, type, timestamp, messageId = null, isCancelled = false) {
+            const messagesDiv = document.getElementById('chatMessages');
+            const messageDiv = document.createElement('div');
+            let className = `message ${type}-message`;
+            if (isCancelled) {
+                className += ' cancelled-message';
+            }
+            messageDiv.className = className;
+            if (messageId) {
+                messageDiv.id = `message-${messageId}`;
+            }
+            
+            const time = new Date(timestamp).toLocaleTimeString();
+            messageDiv.innerHTML = `
+                <div>${content}</div>
+                <div style="font-size: 12px; opacity: 0.7; margin-top: 5px;">${time}</div>
+            `;
+            
+            messagesDiv.appendChild(messageDiv);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+            return messageDiv;
+        }
+
+        function addSystemMessage(message) {
+            const messagesDiv = document.getElementById('chatMessages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message system-message';
+            messageDiv.textContent = message;
+            messagesDiv.appendChild(messageDiv);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        function displayHistory(history) {
+            const messagesDiv = document.getElementById('chatMessages');
+            messagesDiv.innerHTML = '';
+            
+            history.forEach(msg => {
+                let type = msg.role === 'user' ? 'user' : 'ai';
+                if (msg.role === 'system') {
+                    type = 'system';
+                }
+                const isCancelled = msg.cancelled || false;
+                addMessage(msg.content, type, msg.timestamp, null, isCancelled);
+            });
+        }
+
+        function setLoading(loading) {
+            isLoading = loading;
+            document.getElementById('loading').style.display = loading ? 'block' : 'none';
+            document.getElementById('sendButton').disabled = loading;
+        }
+
+        function setProgress(show, message = '') {
+            const progressDiv = document.getElementById('progressIndicator');
+            const progressMessage = document.getElementById('progressMessage');
+            
+            if (show) {
+                progressDiv.classList.add('show');
+                progressMessage.textContent = message;
+            } else {
+                progressDiv.classList.remove('show');
+            }
+        }
+
+        function updateStatus(message, isError = false) {
+            const statusDiv = document.getElementById('status');
+            statusDiv.textContent = message;
+            statusDiv.className = isError ? 'status error' : 'status';
+        }
+
+        async function sendMessage() {
+            const input = document.getElementById('messageInput');
+            const message = input.value.trim();
+            
+            if (!message || isLoading) return;
+            
+            // 현재 선택된 채팅이 없으면 새 채팅 생성
+            if (!currentChatId) {
+                await createNewChatFromMessage(message);
+            }
+            
+            // 사용자 메시지 표시
+            addMessage(message, 'user', new Date().toISOString());
+            input.value = '';
+            
+            setLoading(true);
+            setProgress(true, 'AI가 생각하고 있습니다...');
+            updateStatus('AI 응답을 기다리는 중...');
+            
+            try {
+                // 스트리밍 요청
+                abortController = new AbortController();
+                const response = await fetch(`/api/v1/chat/${currentChatId}/stream`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        type: 'user_message',
+                        message: message,
+                        user_id: document.getElementById('userNameInput').value || 'user'
+                    }),
+                    signal: abortController.signal
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+                let aiMessageDiv = null;
+                let aiContent = '';
+                
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop(); // 마지막 불완전한 라인은 버퍼에 보관
+                    
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const data = JSON.parse(line.slice(6));
+                                handleStreamData(data, aiMessageDiv, aiContent);
+                                
+                                if (data.type === 'ai_response_chunk') {
+                                    if (!aiMessageDiv) {
+                                        aiMessageDiv = addMessage('', 'ai', data.timestamp, data.message_id);
+                                        aiMessageDiv.classList.add('ai-message-streaming');
+                                        currentStreamingMessage = aiMessageDiv;
+                                    }
+                                    aiContent += data.content;
+                                    aiMessageDiv.querySelector('div').textContent = aiContent;
+                                } else if (data.type === 'ai_response_complete') {
+                                    if (aiMessageDiv) {
+                                        aiMessageDiv.classList.remove('ai-message-streaming');
+                                        currentStreamingMessage = null;
+                                    }
+                                }
+                            } catch (e) {
+                                console.error('Error parsing stream data:', e);
+                            }
+                        }
+                    }
+                }
+                
+                updateStatus('준비됨');
+                
+            } catch (error) {
+                if (error.name === 'AbortError') {
+                    addMessage('사용자에 의해 취소되었습니다.', 'system', new Date().toISOString());
+                    updateStatus('취소됨');
+                } else {
+                    console.error('Error:', error);
+                    addMessage(`오류가 발생했습니다: ${error.message}`, 'error', new Date().toISOString());
+                    updateStatus('오류 발생', true);
+                }
+            } finally {
+                setLoading(false);
+                setProgress(false);
+                abortController = null;
+            }
+        }
+
+        function handleStreamData(data, aiMessageDiv, aiContent) {
+            switch(data.type) {
+                case 'progress':
+                    setProgress(true, data.message);
+                    break;
+                case 'cancelled':
+                    addMessage(data.content || data.message, 'system', data.timestamp, data.message_id, true);
+                    setProgress(false);
+                    // 취소 시 현재 스트리밍 메시지 정리
+                    if (currentStreamingMessage) {
+                        currentStreamingMessage.classList.remove('ai-message-streaming');
+                        currentStreamingMessage = null;
+                    }
+                    break;
+                case 'info':
+                    addSystemMessage(data.message);
+                    break;
+                case 'error':
+                    addMessage(data.content, 'error', data.timestamp);
+                    setProgress(false);
+                    // 에러 발생 시 입력 필드 활성화
+                    document.getElementById('sendButton').disabled = false;
+                    break;
+            }
+        }
+
+        async function cancelGeneration() {
+            if (abortController) {
+                abortController.abort();
+                
+                // 백엔드에도 취소 요청 전송 (메시지 저장을 위해)
+                try {
+                    const response = await fetch(`/api/v1/chat/${currentChatId}/cancel`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        }
+                    });
+                    
+                    if (response.ok) {
+                        const data = await response.json();
+                        updateStatus(data.message);
+                    }
+                } catch (error) {
+                    console.error('Error calling cancel API:', error);
+                    updateStatus('요청이 취소되었습니다.');
+                }
+            } else {
+                updateStatus('취소할 수 있는 요청이 없습니다.');
+            }
+        }
+
+
+        function handleKeyPress(event) {
+            if (event.key === 'Enter' && !isLoading) {
+                sendMessage();
+            }
+        }
+
+        // 페이지 로드 시 초기화
+        window.onload = function() {
+            addSystemMessage('새로운 질문을 입력하거나 기존 채팅을 선택해주세요.');
+            loadChats();
+            loadDocuments();
+            // 초기에는 입력 필드 활성화
+            document.getElementById('messageInput').disabled = false;
+            document.getElementById('sendButton').disabled = false;
+        };
+
+        // 사용자명 변경 시 채팅 목록 새로고침
+        document.getElementById('userNameInput').addEventListener('change', function() {
+            loadChats();
+            loadDocuments();
+        });
+
+        // 파일 선택 이벤트 리스너
+        document.getElementById('fileInput').addEventListener('change', updateSelectedFiles);
+
+        // 업로드 모드 전환 함수
+        function toggleUploadMode() {
+            const fileMode = document.getElementById('fileUploadMode');
+            const folderMode = document.getElementById('folderUploadMode');
+            const uploadBtn = document.getElementById('uploadBtn');
+            const selectedMode = document.querySelector('input[name="uploadMode"]:checked').value;
+            
+            if (selectedMode === 'file') {
+                fileMode.style.display = 'block';
+                folderMode.style.display = 'none';
+                uploadBtn.textContent = '업로드';
+            } else {
+                fileMode.style.display = 'none';
+                folderMode.style.display = 'block';
+                uploadBtn.textContent = '폴더 업로드';
+            }
+        }
+
+        // 파일 선택 시 목록 표시
+        function updateSelectedFiles() {
+            const fileInput = document.getElementById('fileInput');
+            const selectedFiles = document.getElementById('selectedFiles');
+            const fileList = document.getElementById('fileList');
+            
+            if (fileInput.files.length > 0) {
+                fileList.innerHTML = '';
+                for (let i = 0; i < fileInput.files.length; i++) {
+                    const li = document.createElement('li');
+                    li.textContent = fileInput.files[i].name;
+                    fileList.appendChild(li);
+                }
+                selectedFiles.style.display = 'block';
+            } else {
+                selectedFiles.style.display = 'none';
+            }
+        }
+
+        // 문서 업로드 관련 함수들
+        async function uploadDocument() {
+            const selectedMode = document.querySelector('input[name="uploadMode"]:checked').value;
+            const userName = document.getElementById('userNameInput').value || 'user';
+            
+            if (selectedMode === 'file') {
+                await uploadFiles();
+            } else {
+                await uploadFolder();
+            }
+        }
+
+        // 개별 파일 업로드 (여러 개 지원)
+        async function uploadFiles() {
+            const fileInput = document.getElementById('fileInput');
+            const folderName = document.getElementById('folderNameInput').value.trim();
+            const userName = document.getElementById('userNameInput').value || 'user';
+            
+            if (!fileInput.files[0]) {
+                showUploadStatus('파일을 선택해주세요.', 'error');
+                return;
+            }
+            
+            const files = Array.from(fileInput.files);
+            const uploadBtn = document.getElementById('uploadBtn');
+            uploadBtn.disabled = true;
+            uploadBtn.textContent = '업로드 중...';
+            
+            // 진행률 표시
+            showProgress();
+            updateProgress(0, `0/${files.length} 파일 업로드 중...`);
+            
+            let successCount = 0;
+            let errorCount = 0;
+            
+            try {
+                for (let i = 0; i < files.length; i++) {
+                    const file = files[i];
+                    const formData = new FormData();
+                    formData.append('file', file);
+                    formData.append('user_id', userName);
+                    
+                    if (folderName) {
+                        formData.append('folder_id', folderName);
+                    }
+                    
+                    try {
+                        // 1. 업로드 요청 (즉시 응답)
+                        const response = await fetch('/api/v1/upload', {
+                            method: 'POST',
+                            body: formData
+                        });
+                        
+                        const data = await response.json();
+                        
+                        if (data.status === 'success') {
+                            const uploadId = data.upload_id;
+                            
+                            // 2. 상태 조회 (폴링)
+                            await pollUploadStatus(uploadId);
+                            successCount++;
+                        } else {
+                            errorCount++;
+                            console.error(`파일 ${file.name} 업로드 실패:`, data.message);
+                        }
+                    } catch (error) {
+                        errorCount++;
+                        console.error(`파일 ${file.name} 업로드 중 오류:`, error);
+                    }
+                    
+                    // 진행률 업데이트
+                    const progress = Math.round(((i + 1) / files.length) * 100);
+                    updateProgress(progress, `${i + 1}/${files.length} 파일 업로드 중...`);
+                }
+                
+                // 결과 표시
+                if (successCount > 0) {
+                    showUploadStatus(`업로드 완료: ${successCount}개 성공, ${errorCount}개 실패`, 'success');
+                } else {
+                    showUploadStatus('모든 파일 업로드에 실패했습니다.', 'error');
+                }
+                
+                // 입력 필드 초기화
+                fileInput.value = '';
+                document.getElementById('folderNameInput').value = '';
+                updateSelectedFiles();
+                await loadDocuments();
+                
+            } catch (error) {
+                console.error('Upload error:', error);
+                showUploadStatus(`업로드 중 오류가 발생했습니다: ${error.message}`, 'error');
+            } finally {
+                uploadBtn.disabled = false;
+                uploadBtn.textContent = '업로드';
+                hideProgress();
+            }
+        }
+
+        // 폴더 업로드
+        async function uploadFolder() {
+            const folderPath = document.getElementById('folderPathInput').value.trim();
+            const userName = document.getElementById('userNameInput').value || 'user';
+            
+            if (!folderPath) {
+                showUploadStatus('폴더 경로를 입력해주세요.', 'error');
+                return;
+            }
+            
+            const uploadBtn = document.getElementById('uploadBtn');
+            uploadBtn.disabled = true;
+            uploadBtn.textContent = '폴더 업로드 중...';
+            
+            try {
+                // 폴더 업로드 API 호출
+                const formData = new FormData();
+                formData.append('folder_path', folderPath);
+                formData.append('user_id', userName);
+                
+                const response = await fetch('/api/v1/upload-folder', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                
+                if (data.status === 'success') {
+                    showUploadStatus(`폴더 업로드 완료: ${data.uploaded_count}개 파일`, 'success');
+                    document.getElementById('folderPathInput').value = '';
+                    await loadDocuments();
+                } else {
+                    showUploadStatus(`폴더 업로드 실패: ${data.message}`, 'error');
+                }
+                
+            } catch (error) {
+                console.error('Folder upload error:', error);
+                showUploadStatus(`폴더 업로드 중 오류가 발생했습니다: ${error.message}`, 'error');
+            } finally {
+                uploadBtn.disabled = false;
+                uploadBtn.textContent = '폴더 업로드';
+            }
+        }
+
+        // 업로드 상태 폴링 함수
+        async function pollUploadStatus(uploadId) {
+            const maxAttempts = 60; // 최대 60초 대기
+            let attempts = 0;
+            
+            const poll = async () => {
+                try {
+                    const response = await fetch(`/api/v1/upload/${uploadId}/status`);
+                    const data = await response.json();
+                    
+                    if (data.status === 'success') {
+                        const status = data.data.status;
+                        
+                        if (status === 'processing') {
+                            showUploadStatus('파일을 처리하고 있습니다...', 'success');
+                            attempts++;
+                            if (attempts < maxAttempts) {
+                                setTimeout(poll, 1000); // 1초 후 다시 확인
+                            } else {
+                                showUploadStatus('업로드 시간이 초과되었습니다.', 'error');
+                            }
+                        } else if (status === 'completed') {
+                            showUploadStatus('업로드가 완료되었습니다!', 'success');
+                        } else if (status === 'failed') {
+                            showUploadStatus(`업로드 실패: ${data.data.error}`, 'error');
+                        }
+                    } else {
+                        showUploadStatus(`상태 조회 실패: ${data.message}`, 'error');
+                    }
+                } catch (error) {
+                    console.error('Status check error:', error);
+                    showUploadStatus('상태 확인 중 오류가 발생했습니다.', 'error');
+                }
+            };
+            
+            await poll();
+        }
+
+        async function loadDocuments() {
+            try {
+                const userName = document.getElementById('userNameInput').value || 'user';
+                const response = await fetch(`/api/v1/documents?user_id=${encodeURIComponent(userName)}`);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                documents = data.data || [];
+                displayDocuments();
+                
+            } catch (error) {
+                console.error('Error loading documents:', error);
+                showUploadStatus('문서 목록을 불러오는데 실패했습니다.', 'error');
+            }
+        }
+
+        function displayDocuments() {
+            const documentListDiv = document.getElementById('documentList');
+            
+            if (documents.length === 0) {
+                documentListDiv.style.display = 'none';
+                return;
+            }
+            
+            documentListDiv.style.display = 'block';
+            documentListDiv.innerHTML = '';
+            
+            documents.forEach(doc => {
+                const docDiv = document.createElement('div');
+                docDiv.className = 'document-item';
+                
+                const fileSize = formatFileSize(doc.file_size);
+                const createTime = new Date(doc.create_dt).toLocaleString();
+                
+                docDiv.innerHTML = `
+                    <div class="document-name" title="${doc.document_name}">
+                        ${doc.document_name} (${fileSize})
+                    </div>
+                    <div class="document-actions">
+                        <button class="document-btn download-btn" onclick="downloadDocument('${doc.document_id}')">다운로드</button>
+                        <button class="document-btn delete-btn" onclick="deleteDocument('${doc.document_id}')">삭제</button>
+                    </div>
+                `;
+                
+                documentListDiv.appendChild(docDiv);
+            });
+        }
+
+        async function downloadDocument(documentId) {
+            try {
+                const userName = document.getElementById('userNameInput').value || 'user';
+                const response = await fetch(`/api/v1/documents/${documentId}/download?user_id=${encodeURIComponent(userName)}`);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                // 파일명 추출
+                const contentDisposition = response.headers.get('Content-Disposition');
+                let filename = 'document';
+                if (contentDisposition) {
+                    const filenameMatch = contentDisposition.match(/filename="(.+)"/);
+                    if (filenameMatch) {
+                        filename = filenameMatch[1];
+                    }
+                }
+                
+                // 파일 다운로드
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(url);
+                document.body.removeChild(a);
+                
+                showUploadStatus('파일이 다운로드되었습니다.', 'success');
+                
+            } catch (error) {
+                console.error('Download error:', error);
+                showUploadStatus(`다운로드 중 오류가 발생했습니다: ${error.message}`, 'error');
+            }
+        }
+
+        async function deleteDocument(documentId) {
+            if (!confirm('정말로 이 문서를 삭제하시겠습니까?')) {
+                return;
+            }
+            
+            try {
+                const userName = document.getElementById('userNameInput').value || 'user';
+                const response = await fetch(`/api/v1/documents/${documentId}?user_id=${encodeURIComponent(userName)}`, {
+                    method: 'DELETE'
+                });
+                
+                const data = await response.json();
+                
+                if (data.status === 'success') {
+                    showUploadStatus('문서가 삭제되었습니다.', 'success');
+                    await loadDocuments();
+                } else {
+                    showUploadStatus(`삭제 실패: ${data.message}`, 'error');
+                }
+                
+            } catch (error) {
+                console.error('Delete error:', error);
+                showUploadStatus(`삭제 중 오류가 발생했습니다: ${error.message}`, 'error');
+            }
+        }
+
+        function showUploadStatus(message, type) {
+            const statusDiv = document.getElementById('uploadStatus');
+            statusDiv.textContent = message;
+            statusDiv.className = `upload-status ${type}`;
+            statusDiv.style.display = 'block';
+            
+            // 3초 후 자동 숨김
+            setTimeout(() => {
+                statusDiv.style.display = 'none';
+            }, 3000);
+        }
+
+        // 진행률 표시 함수들
+        function showProgress() {
+            const progressDiv = document.getElementById('uploadProgress');
+            progressDiv.style.display = 'block';
+        }
+
+        function hideProgress() {
+            const progressDiv = document.getElementById('uploadProgress');
+            progressDiv.style.display = 'none';
+        }
+
+        function updateProgress(percent, text) {
+            const progressFill = document.getElementById('progressFill');
+            const progressText = document.getElementById('progressText');
+            
+            progressFill.style.width = `${percent}%`;
+            progressText.textContent = text;
+        }
+
+        function formatFileSize(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+
+        // 파일 선택 시 파일명 표시
+        document.getElementById('fileInput').addEventListener('change', function() {
+            const file = this.files[0];
+            if (file) {
+                const label = document.querySelector('.file-input-label');
+                label.textContent = `📎 ${file.name}`;
+            }
+        });
+    </script>
+</body>
+</html>

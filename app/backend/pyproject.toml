@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ai-backend"
+version = "1.0.0"
+description = "AI-powered chat service with streaming support"
+authors = [{name = "Your Name", email = "your.email@example.com"}]
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.1.0",
+    "SQLAlchemy>=2.0.0",
+    "psycopg2-binary>=2.9.10",
+    "sqlalchemy-filters>=0.13.0",
+    "alembic>=1.12.0",
+    "dependency-injector[yaml]>=4.41.0",
+    "requests>=2.31.0",
+    "urllib3>=2.0.0",
+    "aiohttp>=3.8.0",
+    "openai>=1.0.0",
+    "pandas>=2.0.0",
+    "validators>=0.22.0",
+    "coloredlogs>=15.0.0",
+    "autologging>=1.3.2",
+    "gunicorn>=21.2.0",
+    "redis>=5.0.0",
+    "PyYAML>=6.0.0",
+    "python-multipart>=0.0.20",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["ai_backend*"]

@@ -1,0 +1,49 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+metadata:
+  name: ai-backend-kustomization
+
+# Namespace for all resources
+namespace: default
+
+# Common labels applied to all resources
+commonLabels:
+  app: ai-backend
+  version: v1.0.0
+  environment: production
+
+# Resources to include
+resources:
+  - configmap.yaml
+  - secret.yaml
+  - persistent-volume.yaml
+  - deployment.yaml
+  - service.yaml
+  - ingress.yaml
+
+# Image transformations
+images:
+  - name: ai-backend
+    newTag: latest
+
+# ConfigMap generator (optional - for environment-specific configs)
+# configMapGenerator:
+#   - name: ai-backend-config-env
+#     literals:
+#       - ENVIRONMENT=production
+
+# Secret generator (optional - for environment-specific secrets)
+# secretGenerator:
+#   - name: ai-backend-secret-env
+#     literals:
+#       - DATABASE_PASSWORD=production-password
+
+# Patches (for environment-specific modifications)
+# patchesStrategicMerge:
+#   - deployment-patch.yaml
+
+# Replicas for deployment
+replicas:
+  - name: ai-backend-deployment
+    count: 2

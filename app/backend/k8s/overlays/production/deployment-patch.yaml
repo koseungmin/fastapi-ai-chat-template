@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-backend-deployment
+spec:
+  template:
+    spec:
+      containers:
+      - name: ai-backend
+        # 프로덕션 환경용 리소스 설정 (더 많은 리소스)
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        # 프로덕션 환경용 환경변수 추가
+        env:
+        - name: PRODUCTION_MODE
+          value: "true"
+        - name: PERFORMANCE_MODE
+          value: "high"
+        # 프로덕션용 헬스체크 설정
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
