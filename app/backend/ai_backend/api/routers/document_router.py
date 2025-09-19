@@ -15,10 +15,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["document-management"])
 
 
-
-
-
-
 @router.post("/upload")
 def upload_document_request(
     file: UploadFile = File(...),
