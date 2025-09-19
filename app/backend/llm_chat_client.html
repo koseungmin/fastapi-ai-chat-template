@@ -63,13 +63,35 @@
         }
         .room-content {
             cursor: pointer;
-            padding-right: 50px; /* 삭제 버튼을 위한 공간 확보 */
+            padding-right: 90px; /* 편집 버튼과 삭제 버튼을 위한 공간 확보 */
         }
         .room-actions {
             position: absolute;
             top: 8px;
             right: 8px;
             z-index: 10;
+            display: flex;
+            gap: 5px;
+        }
+        .edit-room-btn {
+            background: #28a745;
+            color: white;
+            border: none;
+            border-radius: 3px;
+            padding: 4px 8px;
+            cursor: pointer;
+            font-size: 10px;
+            font-weight: bold;
+            width: 35px;
+            height: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+        }
+        .edit-room-btn:hover {
+            background: #218838;
+            transform: scale(1.05);
         }
         .delete-room-btn {
             background: #dc3545;
@@ -90,6 +112,16 @@
         .delete-room-btn:hover {
             background: #c82333;
             transform: scale(1.05);
+        }
+        .room-name-input {
+            width: 100%;
+            padding: 4px 8px;
+            border: 2px solid #007bff;
+            border-radius: 4px;
+            font-size: 14px;
+            font-weight: bold;
+            background: white;
+            outline: none;
         }
         .room-name {
             font-weight: bold;
@@ -613,6 +645,7 @@
                         <div class="room-preview">채팅 ID: ${room.chat_id}</div>
                     </div>
                     <div class="room-actions">
+                        <button class="edit-room-btn" onclick="editChatTitle('${room.chat_id}', event)" title="이름 변경">✏️</button>
                         <button class="delete-room-btn" onclick="deleteChat('${room.chat_id}', event)">삭제</button>
                     </div>
                 `;
@@ -1497,6 +1530,72 @@
                 label.textContent = `📎 ${file.name}`;
             }
         });
+
+        // 채팅방 이름 편집 함수
+        function editChatTitle(chatId, event) {
+            event.stopPropagation(); // 채팅 선택 이벤트 방지
+            
+            const roomElement = event.target.closest('.room-item');
+            const roomNameElement = roomElement.querySelector('.room-name');
+            const currentTitle = roomNameElement.textContent;
+            
+            // 입력 필드로 변경
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.className = 'room-name-input';
+            input.value = currentTitle;
+            input.maxLength = 50; // 최대 50자
+            
+            // 기존 이름을 입력 필드로 교체
+            roomNameElement.innerHTML = '';
+            roomNameElement.appendChild(input);
+            input.focus();
+            input.select();
+            
+            // 저장 함수
+            const saveTitle = async () => {
+                const newTitle = input.value.trim();
+                if (newTitle && newTitle !== currentTitle) {
+                    try {
+                        const response = await fetch(`/api/v1/chat/chats/${chatId}/title?new_title=${encodeURIComponent(newTitle)}&user_id=user`, {
+                            method: 'PUT'
+                        });
+                        
+                        if (response.ok) {
+                            roomNameElement.textContent = newTitle;
+                            showMessage('채팅방 이름이 변경되었습니다.', 'success');
+                        } else {
+                            const error = await response.json();
+                            showMessage(`이름 변경 실패: ${error.message || '알 수 없는 오류'}`, 'error');
+                            roomNameElement.textContent = currentTitle; // 원래 이름으로 복원
+                        }
+                    } catch (error) {
+                        console.error('Error updating chat title:', error);
+                        showMessage('이름 변경 중 오류가 발생했습니다.', 'error');
+                        roomNameElement.textContent = currentTitle; // 원래 이름으로 복원
+                    }
+                } else {
+                    roomNameElement.textContent = currentTitle; // 변경사항 없으면 원래 이름으로 복원
+                }
+            };
+            
+            // 취소 함수
+            const cancelEdit = () => {
+                roomNameElement.textContent = currentTitle;
+            };
+            
+            // 이벤트 리스너 추가
+            input.addEventListener('blur', saveTitle);
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    saveTitle();
+                } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    cancelEdit();
+                }
+            });
+        }
     </script>
 </body>
 </html>

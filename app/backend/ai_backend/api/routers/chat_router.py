@@ -175,5 +175,21 @@ def delete_chat(
     else:
         return {"message": "채팅 삭제에 실패했습니다.", "deleted": False}
 
+@router.put("/chat/chats/{chat_id}/title")
+def update_chat_title(
+    chat_id: str,
+    new_title: str,
+    user_id: str,
+    llm_chat_service: LLMChatService = Depends(get_llm_chat_service)
+):
+    """채팅방 이름을 변경합니다."""
+    # Service Layer에서 전파된 HandledException을 그대로 전파
+    # Global Exception Handler가 자동으로 처리
+    success = llm_chat_service.update_chat_title(chat_id, new_title, user_id)
+    if success:
+        return {"message": "채팅방 이름이 변경되었습니다.", "success": True}
+    else:
+        return {"message": "채팅방 이름 변경에 실패했습니다.", "success": False}
+
 
 

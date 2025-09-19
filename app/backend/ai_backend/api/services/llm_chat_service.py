@@ -780,3 +780,19 @@ class LLMChatService:
             if len(title) > 15:
                 title = title[:12] + "..."
             return title if title else f"Chat {datetime.now().strftime('%H:%M')}"
+    
+    def update_chat_title(self, chat_id: str, new_title: str, user_id: str) -> bool:
+        """채팅방 이름 변경"""
+        try:
+            # CRUD를 통해 채팅방 이름 변경
+            success = self.chat_crud.update_chat_title(chat_id, new_title, user_id)
+            
+            if not success:
+                raise HandledException(ResponseCode.CHAT_NOT_FOUND, msg="채팅방을 찾을 수 없습니다.")
+            
+            return True
+            
+        except HandledException:
+            raise  # HandledException은 그대로 전파
+        except Exception as e:
+            raise HandledException(ResponseCode.CHAT_UPDATE_ERROR, e=e)

@@ -93,6 +93,26 @@ class ChatCRUD:
             log_error("Database error getting chat", e)
             raise HandledException(ResponseCode.DATABASE_QUERY_ERROR, e=e)
     
+    def update_chat_title(self, chat_id: str, new_title: str, user_id: str) -> bool:
+        """채팅방 이름 변경"""
+        try:
+            chat = self.session.query(Chat).filter(
+                Chat.chat_id == chat_id,
+                Chat.user_id == user_id,
+                Chat.is_active == True
+            ).first()
+            
+            if not chat:
+                return False
+            
+            chat.chat_title = new_title
+            self.session.commit()
+            return True
+        except Exception as e:
+            log_error("Database error updating chat title", e)
+            self.session.rollback()
+            raise HandledException(ResponseCode.DATABASE_QUERY_ERROR, e=e)
+    
     def get_chat_or_create(self, chat_id: str, user_id: str = "user") -> Chat:
         """채팅이 없으면 생성하고 반환"""
         try:
