@@ -5,6 +5,7 @@ from fastapi.responses import StreamingResponse
 from ai_backend.core.dependencies import get_llm_chat_service
 from ai_backend.api.services.llm_chat_service import LLMChatService
 from ai_backend.types.request.chat_request import UserMessageRequest, ClearConversationRequest, CreateChatRequest
+from pydantic import BaseModel
 from ai_backend.types.response.chat_response import AIResponse, ConversationHistoryResponse, ConversationClearedResponse, ErrorResponse, CreateChatResponse, ChatListResponse
 from ai_backend.types.response.exceptions import HandledException
 import logging
@@ -12,6 +13,9 @@ import json
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["llm-chat"])
+
+class GenerateTitleRequest(BaseModel):
+    message: str
 
 @router.post("/chat/{chat_id}/message", response_model=AIResponse)
 def send_message(
@@ -190,6 +194,17 @@ def update_chat_title(
         return {"message": "채팅방 이름이 변경되었습니다.", "success": True}
     else:
         return {"message": "채팅방 이름 변경에 실패했습니다.", "success": False}
+
+@router.post("/chat/generate-title")
+async def generate_chat_title(
+    request: GenerateTitleRequest,
+    llm_chat_service: LLMChatService = Depends(get_llm_chat_service)
+):
+    """메시지를 기반으로 채팅방 제목을 생성합니다."""
+    # Service Layer에서 전파된 HandledException을 그대로 전파
+    # Global Exception Handler가 자동으로 처리
+    title = await llm_chat_service.generate_chat_title(request.message)
+    return {"title": title}
 
 
 
