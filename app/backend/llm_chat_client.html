@@ -941,14 +941,19 @@
             const messagesDiv = document.getElementById('chatMessages');
             messagesDiv.innerHTML = '';
             
-            history.forEach(msg => {
+            console.log(`Loading chat history for ${currentChatId}: ${history.length} messages`);
+            
+            history.forEach((msg, index) => {
                 let type = msg.role === 'user' ? 'user' : 'ai';
                 if (msg.role === 'system') {
                     type = 'system';
                 }
                 const isCancelled = msg.cancelled || false;
+                console.log(`Message ${index + 1}: ${type} - ${msg.content.substring(0, 50)}...`);
                 addMessage(msg.content, type, msg.timestamp, null, isCancelled);
             });
+            
+            updateStatus(`채팅 기록 로드 완료: ${history.length}개 메시지`);
         }
 
         function setLoading(loading) {

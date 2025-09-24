@@ -8,7 +8,7 @@ version = "1.0.0"
 description = "AI-powered chat service with streaming support"
 authors = [{name = "Your Name", email = "your.email@example.com"}]
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.10"
 dependencies = [
     "fastapi>=0.104.0",
     "uvicorn[standard]>=0.24.0",
@@ -23,6 +23,7 @@ dependencies = [
     "urllib3>=2.0.0",
     "aiohttp>=3.8.0",
     "openai>=1.0.0",
+    "tiktoken>=0.11.0",
     "pandas>=2.0.0",
     "validators>=0.22.0",
     "coloredlogs>=15.0.0",

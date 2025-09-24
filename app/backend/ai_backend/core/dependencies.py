@@ -88,17 +88,8 @@ def get_llm_chat_service(
     redis_client = Depends(get_redis_client)
 ) -> LLMChatService:
     """LLM 채팅 서비스 의존성 주입 (Redis fallback 지원)"""
-    # 설정 유효성 검사 (Pydantic Settings는 자동으로 검증됨)
-    
-    # OpenAI 설정 디버그 출력
-    print(f"[DEBUG] OpenAI API Key: {settings.get_openai_masked_key()}")
-    print(f"[DEBUG] API Key length: {len(settings.openai_api_key) if settings.openai_api_key else 0}")
-    print(f"[DEBUG] OpenAI Model: {settings.openai_model}")
-    
-    # LLMChatService는 Redis fallback을 완벽하게 지원
+    # LLMChatService는 환경 변수에서 LLM 제공자를 자동으로 선택
     return LLMChatService(
-        openai_api_key=settings.openai_api_key,
-        model=settings.openai_model,
         db=db,
         redis_client=redis_client
     )

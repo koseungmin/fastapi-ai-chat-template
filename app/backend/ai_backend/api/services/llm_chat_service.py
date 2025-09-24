@@ -12,6 +12,8 @@ from ai_backend.utils.uuid_gen import gen
 from ai_backend.types.response.exceptions import HandledException
 from ai_backend.types.response.response_code import ResponseCode
 from datetime import datetime
+import tiktoken
+from ai_backend.api.services.llm_provider_factory import LLMProviderFactory, BaseLLMProvider
 
 logger = logging.getLogger(__name__)
 
@@ -19,17 +21,19 @@ logger = logging.getLogger(__name__)
 class LLMChatService:
     """LLM 채팅 서비스를 관리하는 클래스"""
     
-    def __init__(self, openai_api_key: str, model: str = "gpt-3.5-turbo", db: Session = None, redis_client=None):
-        # API 키 디버그 출력
-        logger.info(f"OpenAI API Key: {openai_api_key[:10]}...{openai_api_key[-4:] if len(openai_api_key) > 14 else 'SHORT'}")
-        logger.info(f"API Key length: {len(openai_api_key)}")
-        
+    def __init__(self, db: Session = None, redis_client=None):
         # DB 필수 검사
         if db is None:
             raise HandledException(ResponseCode.DATABASE_CONNECTION_ERROR, msg="Database session is required")
         
-        self.openai_client = AsyncOpenAI(api_key=openai_api_key)
-        self.model = model
+        # LLM 제공자 팩토리를 사용하여 제공자 생성
+        try:
+            self.llm_provider = LLMProviderFactory.create_provider()
+            logger.info(f"LLM provider initialized: {type(self.llm_provider).__name__}")
+        except Exception as e:
+            logger.error(f"Failed to initialize LLM provider: {e}")
+            raise HandledException(ResponseCode.LLM_CONFIG_ERROR, e=e)
+        
         self.db = db  # 이제 Session 객체
         self.redis_client = redis_client
         self.chat_crud = ChatCRUD(db)  # Repository 인스턴스 생성
@@ -40,6 +44,17 @@ class LLMChatService:
         # 레디스 사용 여부 결정 (로컬: DB만, 운영: 레디스+DB)
         self.use_redis = self._should_use_redis()
         logger.info(f"Cache mode: {'Redis + DB' if self.use_redis else 'DB only'}")
+        
+        # 토큰 관리 설정
+        try:
+            self.tokenizer = tiktoken.encoding_for_model(self.llm_provider.model)
+            self.max_tokens = 4000  # 안전한 토큰 제한
+            self.max_history_tokens = 3000  # 히스토리에 사용할 최대 토큰
+        except Exception as e:
+            logger.warning(f"Failed to initialize tokenizer: {e}")
+            self.tokenizer = None
+            self.max_tokens = 4000
+            self.max_history_tokens = 3000
     
     def _should_use_redis(self) -> bool:
         """레디스 사용 여부 결정 (로컬: false, 운영: true)"""
@@ -65,6 +80,44 @@ class LLMChatService:
         logger.info("Redis available, using Redis + DB mode")
         return True
     
+    def _count_tokens(self, text: str) -> int:
+        """텍스트의 토큰 수 계산"""
+        if self.tokenizer is None:
+            # 간단한 추정 (영어 기준 약 4글자 = 1토큰)
+            return len(text) // 4
+        try:
+            return len(self.tokenizer.encode(text))
+        except Exception as e:
+            logger.warning(f"Token counting failed: {e}")
+            return len(text) // 4
+    
+    def _truncate_messages_by_tokens(self, messages: List[Dict]) -> List[Dict]:
+        """토큰 수를 기준으로 메시지 개수를 제한"""
+        if not self.tokenizer:
+            # 토큰 계산이 불가능한 경우 메시지 개수로 제한
+            return messages[-20:]
+        
+        total_tokens = 0
+        truncated_messages = []
+        
+        # 시스템 프롬프트는 항상 포함
+        system_prompt = messages[0] if messages and messages[0].get("role") == "system" else None
+        if system_prompt:
+            total_tokens += self._count_tokens(system_prompt["content"])
+            truncated_messages.append(system_prompt)
+        
+        # 나머지 메시지를 역순으로 확인 (최신 메시지부터)
+        remaining_messages = messages[1:] if system_prompt else messages
+        for message in reversed(remaining_messages):
+            message_tokens = self._count_tokens(message["content"])
+            if total_tokens + message_tokens > self.max_history_tokens:
+                break
+            total_tokens += message_tokens
+            truncated_messages.insert(1 if system_prompt else 0, message)
+        
+        logger.debug(f"Truncated messages: {len(truncated_messages)} messages, ~{total_tokens} tokens")
+        return truncated_messages
+    
     def _get_messages_for_openai(self, chat_id: str) -> List[Dict]:
         """메시지를 가져와서 OpenAI 형식으로 변환 (레디스 우선)"""
         messages = []
@@ -75,20 +128,30 @@ class LLMChatService:
                 cached_history = self.redis_client.get_chat_messages(chat_id)
                 if cached_history:
                     # 캐시된 데이터를 OpenAI 형식으로 변환
-                    for msg in cached_history[-10:]:  # 최근 10개만
+                    for msg in cached_history[-20:]:  # 최근 20개로 증가
+                        # 취소된 메시지는 제외
+                        if msg.get("cancelled", False):
+                            continue
                         messages.append({
                             "role": msg.get("role", "user"),
                             "content": msg.get("content", "")
                         })
-                    return messages
+                    logger.debug(f"Using cached history for chat {chat_id}: {len(messages)} messages")
+                    
+                    # 토큰 기반으로 메시지 제한 적용
+                    return self._truncate_messages_by_tokens(messages)
             except Exception as e:
                 logger.warning(f"Redis cache read failed: {e}")
         
         # 레디스에 없거나 실패한 경우 DB에서 조회
         db_messages = self.chat_crud.get_messages(chat_id)
         
-        # 최근 10개 메시지만 사용
-        for msg in db_messages[-10:]:
+        # 최근 20개 메시지만 사용 (토큰 제한 고려)
+        for msg in db_messages[-20:]:
+            # 취소된 메시지는 제외
+            if msg.is_cancelled:
+                continue
+                
             # 메시지 타입을 role로 변환
             role = msg.message_type
             if msg.message_type == "user":
@@ -98,15 +161,15 @@ class LLMChatService:
             elif msg.message_type in ["cancelled", "system"]:
                 role = "system"
             
-            # 취소된 메시지는 시스템 메시지로 표시
-            if msg.is_cancelled:
-                role = "system"
-            
             messages.append({
                 "role": role,
                 "content": msg.message
             })
-        return messages
+        
+        logger.debug(f"Using DB history for chat {chat_id}: {len(messages)} messages")
+        
+        # 토큰 기반으로 메시지 제한 적용
+        return self._truncate_messages_by_tokens(messages)
     
     def _ensure_chat_exists(self, chat_id: str):
         """채팅이 존재하지 않으면 생성"""
@@ -135,26 +198,18 @@ class LLMChatService:
             user_message_id = gen()
             self.chat_crud.save_user_message(user_message_id, chat_id, user_id, message)
             
-            # 레디스 캐시 무효화 (새 메시지 추가됨)
-            if self.use_redis:
-                try:
-                    self.redis_client.delete_chat_messages(chat_id)
-                    logger.debug(f"Invalidated cache for chat {chat_id}")
-                except Exception as e:
-                    logger.warning(f"Redis cache invalidation failed: {e}")
-            
-            # LLM 응답 생성
-            ai_response = self._generate_ai_response(chat_id)
+            # LLM 응답 생성 (캐시 무효화 없이)
+            ai_response = asyncio.run(self._generate_ai_response(chat_id))
             
             # AI 응답을 DB에 저장
             ai_message_id = gen()
             self.chat_crud.save_ai_message(ai_message_id, chat_id, user_id, ai_response, "completed")
             
-            # 레디스 캐시 무효화 (AI 응답 추가됨)
+            # 메시지 저장 완료 후 캐시 무효화 (한 번만)
             if self.use_redis:
                 try:
                     self.redis_client.delete_chat_messages(chat_id)
-                    logger.debug(f"Invalidated cache for chat {chat_id} after AI response")
+                    logger.debug(f"Invalidated cache for chat {chat_id} after message completion")
                 except Exception as e:
                     logger.warning(f"Redis cache invalidation failed: {e}")
             
@@ -181,7 +236,7 @@ class LLMChatService:
             
             raise HandledException(ResponseCode.UNDEFINED_ERROR, e=e)
     
-    def _generate_ai_response(self, chat_id: str) -> str:
+    async def _generate_ai_response(self, chat_id: str) -> str:
         """OpenAI API를 사용하여 AI 응답 생성"""
         try:
             # 대화 기록을 가져와서 OpenAI 형식으로 변환
@@ -215,13 +270,12 @@ class LLMChatService:
             }
             messages.insert(0, system_prompt)
             
-            # OpenAI API 호출
-            response = asyncio.run(self.openai_client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                max_tokens=1000,
-                temperature=0.7
-            ))
+            logger.info(f"Sending to LLM for chat {chat_id}: {len(messages)} messages total")
+            for i, msg in enumerate(messages):
+                logger.debug(f"  Message {i}: {msg['role']} - {msg['content'][:100]}...")
+            
+            # LLM 제공자를 통한 API 호출
+            response = await self.llm_provider.create_completion(messages)
             
             return response.choices[0].message.content
             
@@ -316,13 +370,9 @@ class LLMChatService:
         user_message_id = gen()
         self.chat_crud.save_user_message_simple(user_message_id, chat_id, user_id, message)
         
-        # 레디스 캐시 무효화
-        if self.use_redis:
-            try:
-                self.redis_client.delete_chat_messages(chat_id)
-                logger.debug(f"Invalidated cache for chat {chat_id}")
-            except Exception as e:
-                logger.warning(f"Redis cache invalidation failed: {e}")
+        # 스트리밍에서는 캐시 무효화를 하지 않음 (성능 향상)
+        # 대화 완료 후에만 캐시를 업데이트
+        logger.debug(f"Saved user message for chat {chat_id}")
         
         return user_message_id
     
@@ -372,6 +422,10 @@ class LLMChatService:
             }
             messages.insert(0, system_prompt)
             
+            logger.info(f"Streaming to LLM for chat {chat_id}: {len(messages)} messages total")
+            for i, msg in enumerate(messages):
+                logger.debug(f"  Stream Message {i}: {msg['role']} - {msg['content'][:100]}...")
+            
             # 진행 상황 표시
             yield {
                 'type': 'progress',
@@ -390,14 +444,8 @@ class LLMChatService:
                 }
                 return
             
-            # OpenAI API 호출 (스트리밍)
-            stream = await self.openai_client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                max_tokens=1000,
-                temperature=0.7,
-                stream=True
-            )
+            # LLM 제공자를 통한 스트리밍 API 호출
+            stream = await self.llm_provider.create_completion(messages, stream=True)
             
             ai_response_content = ""
             ai_message_id = gen()
@@ -438,8 +486,9 @@ class LLMChatService:
                     except Exception as e:
                         logger.warning(f"DB cancel check failed: {e}")
                 
-                if chunk.choices[0].delta.content is not None:
-                    content = chunk.choices[0].delta.content
+                # Provider별 스트림 청크 처리
+                content = self.llm_provider.process_stream_chunk(chunk)
+                if content is not None:
                     ai_response_content += content
                     
                     # 부분 응답 스트림
@@ -456,7 +505,13 @@ class LLMChatService:
                 # AI 응답 완료 후 상태 업데이트
                 self.chat_crud.update_ai_message_completed(ai_message_id, ai_response_content)
                 
-                # DB에 이미 저장되었으므로 메모리 저장 불필요
+                # 스트리밍 완료 후 캐시 무효화
+                if self.use_redis:
+                    try:
+                        self.redis_client.delete_chat_messages(chat_id)
+                        logger.debug(f"Invalidated cache for chat {chat_id} after streaming completion")
+                    except Exception as e:
+                        logger.warning(f"Redis cache invalidation failed: {e}")
                 
                 # 완료 표시
                 yield {
@@ -742,22 +797,8 @@ class LLMChatService:
     async def generate_chat_title(self, message: str) -> str:
         """질문을 기반으로 채팅 제목을 생성합니다."""
         try:
-            # OpenAI API를 사용하여 제목 생성
-            response = await self.openai_client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "다음 질문을 기반으로 간단하고 명확한 채팅방 제목을 생성해주세요. 20자 이내로 만들어주세요."
-                    },
-                    {
-                        "role": "user",
-                        "content": f"질문: {message}"
-                    }
-                ],
-                max_tokens=50,
-                temperature=0.7
-            )
+            # LLM 제공자를 사용하여 제목 생성
+            response = await self.llm_provider.create_title_completion(message)
             
             title = response.choices[0].message.content.strip()
             
