@@ -607,6 +607,8 @@
         async function loadChats() {
             try {
                 const userName = document.getElementById('userNameInput').value || 'user';
+                console.log('Loading chats for user:', userName);
+                
                 const response = await fetch(`/api/v1/chat/chats?user_id=${encodeURIComponent(userName)}`);
                 
                 if (!response.ok) {
@@ -614,15 +616,20 @@
                 }
                 
                 const data = await response.json();
+                console.log('Loaded chats data:', data);
                 chats = data.chats || [];
                 displayChats();
             } catch (error) {
                 console.error('Error loading chats:', error);
+                updateStatus('채팅 목록을 불러오는데 실패했습니다.', true);
             }
         }
 
         function displayChats() {
             const roomListDiv = document.getElementById('roomList');
+            console.log('Displaying chats, count:', chats.length);
+            console.log('Chats data:', chats);
+            
             roomListDiv.innerHTML = '';
             
             if (chats.length === 0) {
