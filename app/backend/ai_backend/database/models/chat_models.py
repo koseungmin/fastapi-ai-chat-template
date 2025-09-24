@@ -8,9 +8,10 @@ __all__ = [
     "ChatMessage",
 ]
 
+
 class Chat(Base):
     __tablename__ = "CHATS"
-    
+
     chat_id = Column('CHAT_ID', String(50), primary_key=True)
     chat_title = Column('CHAT_TITLE', String(100), nullable=False)
     user_id = Column('USER_ID', String(50), nullable=False)
@@ -18,9 +19,10 @@ class Chat(Base):
     last_message_at = Column('LAST_MESSAGE_AT', DateTime, nullable=True)
     is_active = Column('IS_ACTIVE', Boolean, nullable=False, server_default=true())
 
+
 class ChatMessage(Base):
     __tablename__ = "CHAT_MESSAGES"
-    
+
     message_id = Column('MESSAGE_ID', String(50), primary_key=True)
     chat_id = Column('CHAT_ID', String(50), ForeignKey('CHATS.CHAT_ID'), nullable=False)
     user_id = Column('USER_ID', String(50), nullable=False)
