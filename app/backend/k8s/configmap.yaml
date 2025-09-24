@@ -37,10 +37,20 @@ data:
   DATABASE_NAME: "chat_db"
   DATABASE_USERNAME: "postgres"
   
+  # LLM Provider Configuration
+  LLM_PROVIDER: "azure_openai"  # openai or azure_openai
+  
   # OpenAI Configuration
   OPENAI_MODEL: "gpt-3.5-turbo"
   OPENAI_MAX_TOKENS: "1000"
   OPENAI_TEMPERATURE: "0.7"
+  
+  # Azure OpenAI Configuration
+  AZURE_OPENAI_ENDPOINT: "https://your-resource.openai.azure.com/"
+  AZURE_OPENAI_API_VERSION: "2024-12-01-preview"
+  AZURE_OPENAI_DEPLOYMENT_NAME: "your-deployment-name"
+  AZURE_OPENAI_MAX_TOKENS: "1000"
+  AZURE_OPENAI_TEMPERATURE: "0.7"
   
   # Cache Configuration
   CACHE_ENABLED: "true"

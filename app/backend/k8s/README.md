@@ -37,6 +37,9 @@ echo -n "your-actual-db-password" | base64
 # OpenAI API 키
 echo -n "sk-your-actual-openai-api-key" | base64
 
+# Azure OpenAI API 키
+echo -n "your-actual-azure-openai-api-key" | base64
+
 # Redis 패스워드 (선택사항)
 echo -n "your-actual-redis-password" | base64
 ```
@@ -48,6 +51,9 @@ echo -n "your-actual-redis-password" | base64
 - `CORS_ORIGINS`: 허용할 도메인들
 - `DATABASE_HOST`: 데이터베이스 호스트 (예: `postgres-service`)
 - `REDIS_HOST`: Redis 호스트 (예: `redis-service`)
+- `LLM_PROVIDER`: LLM 제공자 (`openai` 또는 `azure_openai`)
+- `AZURE_OPENAI_ENDPOINT`: Azure OpenAI 엔드포인트 URL
+- `AZURE_OPENAI_DEPLOYMENT_NAME`: Azure OpenAI 배포 이름
 
 ### 4. Ingress 설정
 
@@ -58,6 +64,28 @@ echo -n "your-actual-redis-password" | base64
 ```
 
 ## 배포 방법
+
+### 환경별 배포 (권장)
+
+#### Development 환경
+```bash
+# Development 환경 배포
+kubectl apply -k overlays/development/
+
+# 또는 개별 리소스 배포
+kubectl apply -f overlays/development/configmap-patch.yaml
+kubectl apply -f overlays/development/deployment-patch.yaml
+```
+
+#### Production 환경
+```bash
+# Production 환경 배포
+kubectl apply -k overlays/production/
+
+# 또는 개별 리소스 배포
+kubectl apply -f overlays/production/configmap-patch.yaml
+kubectl apply -f overlays/production/deployment-patch.yaml
+```
 
 ### 방법 1: kubectl 사용
 
