@@ -48,21 +48,21 @@ async def send_message_stream(
     llm_chat_service: LLMChatService = Depends(get_llm_chat_service)
 ):
     """스트리밍 방식으로 메시지를 전송하고 AI 응답을 받습니다 (SSE)."""
-    
+
     async def generate_stream():
         try:
             # 사용자 메시지 저장
             user_message_id = llm_chat_service.save_user_message(
                 chat_id, request.message, request.user_id
             )
-            
+
             # 사용자 메시지 스트림 전송
             yield f"data: {json.dumps({'type': 'user_message', 'message_id': user_message_id, 'content': request.message, 'user_id': request.user_id, 'timestamp': llm_chat_service.get_current_timestamp()}, ensure_ascii=False)}\n\n"
-            
+
             # AI 응답 생성 (스트리밍)
             async for chunk in llm_chat_service.generate_ai_response_stream(chat_id, request.user_id):
                 yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
-                
+
         except HandledException as e:
             # HandledException은 스트림으로 전달 (연결 유지)
             logger.error(f"HandledException in streaming: {str(e)}")
@@ -87,7 +87,7 @@ async def send_message_stream(
                 chat_id=chat_id
             )
             yield f"data: {json.dumps(error_response.dict(), ensure_ascii=False)}\n\n"
-    
+
     return StreamingResponse(
         generate_stream(),
         media_type="text/event-stream",
@@ -154,6 +154,7 @@ def create_chat(
         created_at=chat_info["created_at"]
     )
 
+
 @router.get("/chat/chats", response_model=ChatListResponse)
 def get_chats(
     user_id: str,
@@ -164,6 +165,7 @@ def get_chats(
     # Global Exception Handler가 자동으로 처리
     chats = llm_chat_service.get_user_chats(user_id)
     return ChatListResponse(chats=chats)
+
 
 @router.delete("/chat/chats/{chat_id}")
 def delete_chat(
@@ -178,6 +180,7 @@ def delete_chat(
         return {"message": "채팅이 삭제되었습니다.", "deleted": True}
     else:
         return {"message": "채팅 삭제에 실패했습니다.", "deleted": False}
+
 
 @router.put("/chat/chats/{chat_id}/title")
 def update_chat_title(
@@ -194,6 +197,7 @@ def update_chat_title(
         return {"message": "채팅방 이름이 변경되었습니다.", "success": True}
     else:
         return {"message": "채팅방 이름 변경에 실패했습니다.", "success": False}
+
 
 @router.post("/chat/generate-title")
 async def generate_chat_title(

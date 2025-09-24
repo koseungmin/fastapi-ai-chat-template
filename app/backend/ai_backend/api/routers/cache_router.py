@@ -94,20 +94,20 @@ def test_cache(
             "message": "Redis가 사용할 수 없습니다.",
             "cache_enabled": False
         }
-    
+
     # 테스트용 데이터
     test_key = "test:cache:123"
     test_data = {"message": "안녕하세요!", "timestamp": "2024-01-01T00:00:00"}
-    
+
     # Redis에 테스트 데이터 저장
     redis_client.redis_client.setex(test_key, 60, str(test_data))
-    
+
     # 저장된 데이터 조회
     cached_data = redis_client.redis_client.get(test_key)
-    
+
     # 테스트 데이터 삭제
     redis_client.redis_client.delete(test_key)
-    
+
     return {
         "status": "success",
         "message": "캐시 테스트가 성공적으로 완료되었습니다.",
@@ -118,7 +118,7 @@ def test_cache(
 
 @router.get("/cache/config")
 def get_cache_config(
-    cache_config = Depends(get_cache_config)
+    cache_config=Depends(get_cache_config)
 ):
     """캐시 설정 조회"""
     # Service Layer에서 전파된 HandledException을 그대로 전파
@@ -147,28 +147,28 @@ def get_cache_keys(
             "status": "error",
             "message": "Redis가 사용할 수 없습니다."
         }
-    
+
     try:
         # 패턴에 맞는 키들 조회
         keys = redis_client.redis_client.keys(pattern)
-        
+
         # 키별 정보 수집
         key_info = []
         for key in keys:
             # 키를 문자열로 변환 (bytes인 경우만 decode)
             key_str = key.decode('utf-8') if isinstance(key, bytes) else str(key)
             ttl = redis_client.redis_client.ttl(key)
-            
+
             # 타입 정보를 문자열로 변환
             key_type_raw = redis_client.redis_client.type(key)
             key_type = key_type_raw.decode('utf-8') if isinstance(key_type_raw, bytes) else str(key_type_raw)
-            
+
             key_info.append({
                 "key": key_str,
                 "type": key_type,
                 "ttl": ttl if ttl > 0 else "persistent"
             })
-        
+
         return {
             "status": "success",
             "data": {
