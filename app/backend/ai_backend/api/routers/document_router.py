@@ -194,10 +194,16 @@ def download_document(
         document_id, user_id
     )
     
+    # 한글 파일명 처리를 위한 URL 인코딩
+    import urllib.parse
+    encoded_filename = urllib.parse.quote(filename.encode('utf-8'))
+    
     return StreamingResponse(
         io.BytesIO(file_content),
         media_type=media_type,
-        headers={"Content-Disposition": f"attachment; filename={filename}"}
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"
+        }
     )
 
 
