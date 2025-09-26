@@ -343,6 +343,25 @@ def update_document_processing(
         }
 
 
+@router.get("/upload/{upload_id}/status")
+def get_upload_status(
+    upload_id: str,
+    user_id: str = Query(default="user"),
+    document_service: DocumentService = Depends(get_document_service)
+):
+    """업로드 상태 조회"""
+    # upload_id는 실제로는 document_id입니다
+    document = document_service.get_document(upload_id, user_id)
+    return {
+        "status": "success",
+        "data": {
+            "document_id": upload_id,
+            "status": document.get("status", "unknown"),
+            "error": document.get("error_message") if document.get("status") == "failed" else None
+        }
+    }
+
+
 @router.get("/documents/{document_id}/permissions")
 def get_document_permissions(
     document_id: str,

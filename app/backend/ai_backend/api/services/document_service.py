@@ -101,40 +101,45 @@ class DocumentService:
             # 파일 해시 계산 (중복 체크용)
             file_hash = self._calculate_file_hash(file_content)
             
-            # 중복 파일 체크
-            existing_completed_doc = self.document_crud.find_completed_document_by_hash(file_hash)
-            if existing_completed_doc:
-                logger.info(f"📋 완료된 기존 문서 발견: {existing_completed_doc.document_id}")
-                return {
-                    "document_id": existing_completed_doc.document_id,
-                    "document_name": existing_completed_doc.document_name,
-                    "original_filename": existing_completed_doc.original_filename,
-                    "file_size": existing_completed_doc.file_size,
-                    "file_type": existing_completed_doc.file_type,
-                    "file_extension": existing_completed_doc.file_extension,
-                    "file_hash": existing_completed_doc.file_hash,
-                    "upload_path": existing_completed_doc.upload_path,
-                    "is_public": existing_completed_doc.is_public,
-                    "status": existing_completed_doc.status,
-                    "total_pages": existing_completed_doc.total_pages,
-                    "processed_pages": existing_completed_doc.processed_pages,
-                    "vector_count": existing_completed_doc.vector_count,
-                    "language": existing_completed_doc.language,
-                    "author": existing_completed_doc.author,
-                    "subject": existing_completed_doc.subject,
-                    "create_dt": existing_completed_doc.create_dt.isoformat(),
-                    "updated_at": existing_completed_doc.updated_at.isoformat() if existing_completed_doc.updated_at else None,
-                    "processed_at": existing_completed_doc.processed_at.isoformat() if existing_completed_doc.processed_at else None,
-                    "is_duplicate": True  # 중복 파일임을 표시
-                }
-            
-            # 실패한 기존 문서가 있는지 확인
-            existing_failed_doc = self.document_crud.find_document_by_hash(file_hash)
-            if existing_failed_doc and existing_failed_doc.status in ['failed', 'processing']:
-                logger.info(f"🔄 실패한 기존 문서 발견, 재처리 시작: {existing_failed_doc.document_id} (상태: {existing_failed_doc.status})")
-                # 실패한 문서는 재처리를 위해 상태를 processing으로 변경
-                self.document_crud.update_document_status(existing_failed_doc.document_id, 'processing')
-                document_id = existing_failed_doc.document_id
+            # 중복 파일 체크 (모든 상태의 문서 확인)
+            existing_doc = self.document_crud.find_document_by_hash(file_hash)
+            if existing_doc:
+                if existing_doc.status == 'completed':
+                    logger.info(f"📋 완료된 기존 문서 발견: {existing_doc.document_id}")
+                    return {
+                        "document_id": existing_doc.document_id,
+                        "document_name": existing_doc.document_name,
+                        "original_filename": existing_doc.original_filename,
+                        "file_size": existing_doc.file_size,
+                        "file_type": existing_doc.file_type,
+                        "file_extension": existing_doc.file_extension,
+                        "file_hash": existing_doc.file_hash,
+                        "upload_path": existing_doc.upload_path,
+                        "is_public": existing_doc.is_public,
+                        "status": existing_doc.status,
+                        "total_pages": existing_doc.total_pages,
+                        "processed_pages": existing_doc.processed_pages,
+                        "vector_count": existing_doc.vector_count,
+                        "language": existing_doc.language,
+                        "author": existing_doc.author,
+                        "subject": existing_doc.subject,
+                        "permissions": existing_doc.permissions or [],
+                        "document_type": existing_doc.document_type or 'common',
+                        "create_dt": existing_doc.create_dt.isoformat(),
+                        "updated_at": existing_doc.updated_at.isoformat() if existing_doc.updated_at else None,
+                        "processed_at": existing_doc.processed_at.isoformat() if existing_doc.processed_at else None,
+                        "is_duplicate": True  # 중복 파일임을 표시
+                    }
+                elif existing_doc.status in ['processing', 'failed']:
+                    logger.info(f"🔄 기존 문서 발견, 재처리 시작: {existing_doc.document_id} (상태: {existing_doc.status})")
+                    # 기존 문서를 재처리를 위해 상태를 processing으로 변경
+                    self.document_crud.update_document_status(existing_doc.document_id, 'processing')
+                    document_id = existing_doc.document_id
+                else:
+                    # 알 수 없는 상태의 문서도 재처리
+                    logger.info(f"🔄 알 수 없는 상태의 기존 문서 발견, 재처리 시작: {existing_doc.document_id} (상태: {existing_doc.status})")
+                    self.document_crud.update_document_status(existing_doc.document_id, 'processing')
+                    document_id = existing_doc.document_id
             else:
                 # 고유한 문서 ID 생성 (타임스탬프 + 해시 앞 8자리)
                 document_id = f"doc_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{file_hash[:8]}"
@@ -151,9 +156,9 @@ class DocumentService:
                 f.write(file_content)
             
             # DB에 메타데이터 저장 (기존 문서 재사용 또는 새 문서 생성)
-            if existing_failed_doc and existing_failed_doc.status in ['failed', 'processing']:
-                # 기존 실패한 문서 재사용
-                document = existing_failed_doc
+            if existing_doc and existing_doc.status in ['failed', 'processing']:
+                # 기존 문서 재사용
+                document = existing_doc
                 # 필요한 정보 업데이트
                 document.document_name = original_filename
                 document.original_filename = original_filename
@@ -164,7 +169,8 @@ class DocumentService:
                 document.user_id = user_id
                 document.upload_path = str(upload_path)
                 document.is_public = is_public
-                document.status = 'processing'
+                document.status = 'completed'  # 즉시 완료 상태로 설정
+                document.processed_at = datetime.now()  # 처리 완료 시간 설정
                 document.updated_at = datetime.now()
                 self.document_crud.db.commit()
             else:
@@ -181,10 +187,13 @@ class DocumentService:
                     upload_path=str(upload_path),
                     is_public=is_public,
                     file_hash=file_hash,
-                    status='processing',  # 기본으로 processing 상태로 시작
+                    status='completed',  # 즉시 완료 상태로 설정
                     permissions=permissions,
                     document_type=document_type
                 )
+                # 처리 완료 시간 설정
+                document.processed_at = datetime.now()
+                self.document_crud.db.commit()
             
             return {
                 "document_id": document.document_id,

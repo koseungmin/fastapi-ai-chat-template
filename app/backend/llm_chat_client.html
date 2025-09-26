@@ -1256,7 +1256,7 @@
                         const data = await response.json();
                         
                         if (data.status === 'success') {
-                            const uploadId = data.upload_id;
+                            const uploadId = data.data.document_id;
                             
                             // 2. 상태 조회 (폴링)
                             await pollUploadStatus(uploadId);

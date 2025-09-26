@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import os
 import logging
 import logging.config
@@ -49,11 +50,11 @@ def cleanup_old_logs():
         log_file = settings.log_file
         retention_days = settings.log_retention_days
         
-        logger.debug(f"로그 정리 시작 - 디렉토리: {log_dir}, 보관 기간: {retention_days}일")
+        logger.debug("로그 정리 시작 - 디렉토리: {}, 보관 기간: {}일".format(log_dir, retention_days))
         
         # 로그 파일 패턴 생성 (app.log.2025-09-15 형태)
         # glob 패턴으로 날짜별 로테이션 파일들 검색
-        log_pattern = os.path.join(log_dir, f"{log_file}.*")
+        log_pattern = os.path.join(log_dir, "{log_file}.*".format(log_file=log_file))
         log_files = glob.glob(log_pattern)
         
         if not log_files:
@@ -63,7 +64,7 @@ def cleanup_old_logs():
         # 현재 날짜에서 보관 기간을 뺀 날짜 계산
         # 이 날짜 이전의 파일들이 삭제 대상
         cutoff_date = datetime.now() - timedelta(days=retention_days)
-        logger.debug(f"삭제 기준 날짜: {cutoff_date.strftime('%Y-%m-%d')}")
+        logger.debug("삭제 기준 날짜: {}".format(cutoff_date.strftime('%Y-%m-%d')))
         
         deleted_count = 0
         skipped_count = 0
@@ -75,7 +76,7 @@ def cleanup_old_logs():
                 
                 # 현재 로그 파일 (app.log)은 건너뛰기
                 if filename == log_file:
-                    logger.debug(f"현재 로그 파일은 보호됩니다: {filename}")
+                    logger.debug("현재 로그 파일은 보호됩니다: {}".format(filename))
                     continue
                 
                 # 파일명에 점이 있는 경우 날짜 부분 추출
@@ -89,36 +90,36 @@ def cleanup_old_logs():
                         if file_date < cutoff_date:
                             os.remove(log_file_path)
                             deleted_count += 1
-                            logger.debug(f"오래된 로그 파일 삭제: {log_file_path} (날짜: {date_part})")
+                            logger.debug("오래된 로그 파일 삭제: {} (날짜: {})".format(log_file_path, date_part))
                         else:
-                            logger.debug(f"보관 기간 내 파일 유지: {log_file_path} (날짜: {date_part})")
+                            logger.debug("보관 기간 내 파일 유지: {} (날짜: {})".format(log_file_path, date_part))
                     except ValueError:
                         # 날짜 형식이 맞지 않는 파일은 건너뛰기
                         # (예: app.log.1, app.log.backup 등)
                         skipped_count += 1
-                        logger.debug(f"날짜 형식이 맞지 않아 건너뛰기: {filename}")
+                        logger.debug("날짜 형식이 맞지 않아 건너뛰기: {}".format(filename))
                         continue
                 else:
                     # 파일명에 점이 없는 경우도 건너뛰기
                     skipped_count += 1
-                    logger.debug(f"예상하지 못한 파일명 형식으로 건너뛰기: {filename}")
+                    logger.debug("예상하지 못한 파일명 형식으로 건너뛰기: {}".format(filename))
                     
             except Exception as e:
                 # 개별 파일 삭제 실패 시 경고 로그만 출력하고 계속 진행
-                logger.warning(f"로그 파일 삭제 중 오류: {log_file_path}, 오류: {e}")
+                logger.warning("로그 파일 삭제 중 오류: {}, 오류: {}".format(log_file_path, e))
         
         # 정리 결과 로그 출력
         if deleted_count > 0:
-            logger.info(f"오래된 로그 파일 {deleted_count}개 삭제 완료 (보관 기간: {retention_days}일)")
+            logger.info("오래된 로그 파일 {}개 삭제 완료 (보관 기간: {}일)".format(deleted_count, retention_days))
         else:
             logger.debug("삭제할 오래된 로그 파일이 없습니다")
             
         if skipped_count > 0:
-            logger.debug(f"날짜 형식이 맞지 않아 건너뛴 파일: {skipped_count}개")
+            logger.debug("날짜 형식이 맞지 않아 건너뛴 파일: {}개".format(skipped_count))
             
     except Exception as e:
         # 전체 프로세스 실패 시에도 애플리케이션 중단 없이 에러 로그만 출력
-        logger.error(f"로그 정리 중 오류 발생: {e}")
+        logger.error("로그 정리 중 오류 발생: {}".format(e))
         logger.error("로그 정리 실패로 인해 디스크 공간이 부족할 수 있습니다. 수동으로 확인해주세요.")
 
 def setup_logging():
@@ -235,7 +236,7 @@ def setup_logging():
     
     # 로깅 설정 완료 로그
     logger = logging.getLogger(__name__)
-    logger.info(f"로깅 설정 완료 - 앱 로그 레벨: {settings.app_log_level.upper()}, 서버 로그 레벨: {settings.server_log_level.upper()}")
+    logger.info("로깅 설정 완료 - 앱 로그 레벨: {}, 서버 로그 레벨: {}".format(settings.app_log_level.upper(), settings.server_log_level.upper()))
 
 # 동적 로깅 설정 적용
 setup_logging()
@@ -254,12 +255,12 @@ cleanup_old_logs()
 # 간단한 예외 처리는 FastAPI 기본값 사용
 
 
-def create_app() -> FastAPI:
+def create_app():
     logger.info("Creating FastAPI application...")
     
     # 디버그 모드 설정
     debug_mode = settings.app_debug
-    logger.info(f"애플리케이션 디버그 모드: {'활성화' if debug_mode else '비활성화'}")
+    logger.info("애플리케이션 디버그 모드: {}".format('활성화' if debug_mode else '비활성화'))
     
     app = FastAPI(
         title="LLM Chat API",
